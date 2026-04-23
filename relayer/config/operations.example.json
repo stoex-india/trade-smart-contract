@@ -1,0 +1,62 @@
+{
+  "contracts": {
+    "tradeManager": "0x0000000000000000000000000000000000000000",
+    "whitelistRegistry": "0x0000000000000000000000000000000000000000",
+    "goldNft": "0x0000000000000000000000000000000000000000"
+  },
+  "operations": {
+    "buy": {
+      "enabled": true,
+      "target": "tradeManager",
+      "fragment": "function createBuyRequest(uint256 grams,bytes32 paymentRefId)",
+      "gas": 700000
+    },
+    "sell": {
+      "enabled": true,
+      "target": "tradeManager",
+      "fragment": "function createSellRequest(uint256 grams,bytes32 payoutRefId)",
+      "gas": 700000
+    },
+    "redeem": {
+      "enabled": true,
+      "target": "tradeManager",
+      "fragment": "function createRedeemRequest(uint256 grams,bytes32 deliveryRefId)",
+      "gas": 700000
+    },
+    "mint": {
+      "enabled": true,
+      "target": "tradeManager",
+      "fragment": "function proposeMint(uint256 grams,address creditTo,bytes32 vaultReceiptId,(bytes32 vaultReceiptId,bytes32 batchId,uint16 purity,uint256 depositTimestamp,address apId,address vpId,uint256 lockUntilTs,uint256 grams) lot)",
+      "gas": 900000,
+      "allowedSigners": []
+    },
+    "burn": {
+      "enabled": true,
+      "target": "tradeManager",
+      "fragment": "function proposeBurn(uint256 grams,bytes32 referenceId,string reason_)",
+      "gas": 700000,
+      "allowedSigners": []
+    },
+    "registerUser": {
+      "enabled": false,
+      "target": "whitelistRegistry",
+      "fragment": "function registerUser(bytes32 userId,address wallet,string kycRef)",
+      "gas": 500000,
+      "allowedSigners": []
+    },
+    "verifyKYC": {
+      "enabled": false,
+      "target": "whitelistRegistry",
+      "fragment": "function verifyKYC(address wallet)",
+      "gas": 300000,
+      "allowedSigners": []
+    },
+    "mintCertificate": {
+      "enabled": false,
+      "target": "goldNft",
+      "fragment": "function mintCertificate(address user)",
+      "gas": 400000,
+      "allowedSigners": []
+    }
+  }
+}
