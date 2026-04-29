@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "run:gasless": "node src/gasless-runner.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

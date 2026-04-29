@@ -1,0 +1,18 @@
+.env
+.env.*
+.DS_Store
+.vscode
+.idea
+.cursor
+.cursorrules
+.cursorignore
+.cursorignorerules
+.cursorignorerulesrules
+.cursorignorerulesrulesrules
+.cursorignorerulesrulesrulesrules
+.cursorignorerulesrulesrulesrulesrules
+broadcast/
+
+# Foundry generated artifacts/cache
+cache/
+out/

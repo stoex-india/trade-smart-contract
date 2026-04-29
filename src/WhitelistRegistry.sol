@@ -9,8 +9,8 @@ pragma solidity ^0.8.24;
 /// - `AT_ROLE`: co-approve wallet migration with admin; `unsuspendWallet` override.
 /// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 
@@ -20,7 +20,7 @@ import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
 
 contract WhitelistRegistry is
     Initializable,
-    AccessControlUpgradeable,
+    StoexDeployerAdminUpgradeable,
     ERC2771ContextUpgradeable,
     UUPSUpgradeable,
     IWhitelistRegistry
@@ -54,11 +54,11 @@ contract WhitelistRegistry is
         _disableInitializers();
     }
 
-    function initialize(address admin, address trustedForwarder_) external initializer {
-        if (admin == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
+    function initialize(address deployer_, address trustedForwarder_) external initializer {
+        if (deployer_ == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        __StoexDeployerAdmin_init_unchained(deployer_);
         _trustedForwarderValue = trustedForwarder_;
         version = 1;
     }
@@ -199,6 +199,17 @@ contract WhitelistRegistry is
         if (!_registered[wallet]) return false;
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (p.kycStatus != StoexTypes.KYCStatus.Verified) return false;
+        if (p.walletStatus != StoexTypes.WalletStatus.Whitelisted) return false;
+        if (p.userStatus != StoexTypes.UserStatus.Active) return false;
+        if (uint256(p.riskLevel) >= uint256(StoexTypes.RiskLevel.Flagged)) return false;
+        return true;
+    }
+
+    /// @inheritdoc IWhitelistRegistry
+    function isEligibleForRestrictedBuy(address wallet) external view override returns (bool) {
+        if (!_registered[wallet]) return false;
+        StoexTypes.UserProfile storage p = _profiles[wallet];
+        if (p.kycStatus != StoexTypes.KYCStatus.Pending) return false;
         if (p.walletStatus != StoexTypes.WalletStatus.Whitelisted) return false;
         if (p.userStatus != StoexTypes.UserStatus.Active) return false;
         if (uint256(p.riskLevel) >= uint256(StoexTypes.RiskLevel.Flagged)) return false;

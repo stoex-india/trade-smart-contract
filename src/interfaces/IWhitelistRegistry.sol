@@ -6,7 +6,11 @@ import {StoexTypes} from "../libraries/StoexTypes.sol";
 /// @title IWhitelistRegistry
 /// @notice Minimal read API for `GoldNFT` / `TradeManager` eligibility checks.
 interface IWhitelistRegistry {
+    /// @notice Full platform eligibility: KYC verified, whitelisted wallet, active, within risk policy.
     function isEligible(address wallet) external view returns (bool);
+
+    /// @notice Registered user pending KYC may buy only, subject to `GovernanceConfig.nonKycMaxHoldingCap` (not sell/redeem/mint paths).
+    function isEligibleForRestrictedBuy(address wallet) external view returns (bool);
 
     function getProfile(address wallet) external view returns (StoexTypes.UserProfile memory);
 }

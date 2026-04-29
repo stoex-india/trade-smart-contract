@@ -21,4 +21,8 @@ interface IGovernanceConfig {
     function defaultTimelockDuration() external view returns (uint256);
 
     function goldPrecision() external view returns (uint8);
+
+    function nonKycMaxHoldingCap() external view returns (uint256);
+
+    function vpRequiredForApprovals() external view returns (bool);
 }

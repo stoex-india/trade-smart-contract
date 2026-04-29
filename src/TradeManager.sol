@@ -11,7 +11,7 @@ pragma solidity ^0.8.24;
 /// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (burn debits this whitelisted account).
 /// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest`; `DEFAULT_ADMIN_ROLE` for `executeRequest` and upgrades.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -30,7 +30,7 @@ import {ITimelockController} from "./interfaces/ITimelockController.sol";
 
 contract TradeManager is
     Initializable,
-    AccessControlUpgradeable,
+    StoexDeployerAdminUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     EIP712Upgradeable,
@@ -101,7 +101,7 @@ contract TradeManager is
     }
 
     function initialize(
-        address admin,
+        address deployer_,
         address governance_,
         address whitelistRegistry_,
         address goldNFT_,
@@ -110,7 +110,7 @@ contract TradeManager is
         address trustedForwarder_
     ) external initializer {
         if (
-            admin == address(0) || governance_ == address(0) || whitelistRegistry_ == address(0) || goldNFT_ == address(0)
+            deployer_ == address(0) || governance_ == address(0) || whitelistRegistry_ == address(0) || goldNFT_ == address(0)
                 || escrowVault_ == address(0) || timelockController_ == address(0) || trustedForwarder_ == address(0)
         ) revert ZeroAddress();
 
@@ -119,8 +119,7 @@ contract TradeManager is
         __ReentrancyGuard_init();
         __EIP712_init("StoexGoldTrade", "1");
         __UUPSUpgradeable_init();
-
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        __StoexDeployerAdmin_init_unchained(deployer_);
 
         governance = IGovernanceConfig(governance_);
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
@@ -168,9 +167,14 @@ contract TradeManager is
     function createBuyRequest(uint256 grams, bytes32 paymentRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
         if (!routingConfigured) revert RoutingNotSet();
         address user = _msgSender();
-        _requireEligible(user);
         _checkGrams(grams);
-        _checkBuyCap(grams);
+        if (whitelistRegistry.isEligible(user)) {
+            _checkBuyCap(grams);
+        } else if (whitelistRegistry.isEligibleForRestrictedBuy(user)) {
+            _checkNonKycHoldingCap(user, grams);
+        } else {
+            revert NotEligible();
+        }
 
         requestId = ++nextRequestId;
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
@@ -485,9 +489,14 @@ contract TradeManager is
 
     function _executeTrade(uint256 requestId, TradeRequest storage r) private {
         if (r.requestType == StoexTypes.RequestType.Buy) {
-            _requireEligible(r.targetUser);
-            _checkBuyCap(r.grams);
-            _accrueBuy(r.grams);
+            if (whitelistRegistry.isEligible(r.targetUser)) {
+                _checkBuyCap(r.grams);
+                _accrueBuy(r.grams);
+            } else if (whitelistRegistry.isEligibleForRestrictedBuy(r.targetUser)) {
+                _checkNonKycHoldingCap(r.targetUser, r.grams);
+            } else {
+                revert NotEligible();
+            }
             if (goldNFT.tokenIdByBeneficiary(r.targetUser) == 0) {
                 goldNFT.mintCertificateForTrade(r.targetUser);
             }
@@ -548,6 +557,10 @@ contract TradeManager is
         uint256 day = block.timestamp / 1 days;
         uint256 used = _buyDay == day ? _buyDayGrams : 0;
         if (used + grams > governance.dailyBuyCap()) revert CapBuy();
+    }
+
+    function _checkNonKycHoldingCap(address user, uint256 grams) private view {
+        if (goldNFT.userHolding(user) + grams > governance.nonKycMaxHoldingCap()) revert CapBuyNonKyc();
     }
 
     function _checkSellCap(uint256 grams) private view {
@@ -616,6 +629,7 @@ contract TradeManager is
     error ZeroAmount();
     error ExceedsMax();
     error CapBuy();
+    error CapBuyNonKyc();
     error CapSell();
     error BelowMinRedeem();
     error Timelocked();

@@ -11,14 +11,14 @@ import {TimelockController} from "../src/TimelockController.sol";
 import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 
 /// @title ConfigureRoles
-/// @notice Grants operational roles after deployment. Run with the same `PRIVATE_KEY` that holds `DEFAULT_ADMIN_ROLE`.
+/// @notice Grants operational roles after deployment. Run with `PRIVATE_KEY` for the **operations admin** (`DEFAULT_ADMIN_ROLE` after `setInitialAdmin`).
 /// @dev Example:
 /// `forge script script/ConfigureRoles.s.sol:ConfigureRoles --rpc-url amoy --broadcast`
 ///
 /// Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `GOVERNANCE_CONFIG`, `WHITELIST_REGISTRY`, `GOLD_NFT`, `TIMELOCK_CONTROLLER`
 /// Optional role holders (omit or set to zero address to skip): `ROLE_AP`, `ROLE_VP`, `ROLE_AT`, `ROLE_PAP`, `ROLE_AUDITOR`
 /// Optional: `ERC2771_FORWARDER` to rotate trusted forwarder on gasless-enabled contracts.
-/// Optional investors: `INVESTOR_1` .. `INVESTOR_20` — must already be registered + KYC-verified on `WhitelistRegistry` before granting `USER_ROLE`.
+/// @dev Investor onboarding (`registerUser` / `verifyKYC` / `USER_ROLE`) is intentionally handled by `OnboardInvestors.s.sol`.
 contract ConfigureRoles is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -58,15 +58,6 @@ contract ConfigureRoles is Script {
         }
         if (pap != address(0)) trade.grantRole(StoexRoles.PAP_ROLE, pap);
         if (aud != address(0)) trade.grantRole(StoexRoles.AUDITOR_ROLE, aud);
-
-        for (uint256 i = 1; i <= 20; i++) {
-            string memory key = string.concat("INVESTOR_", vm.toString(i));
-            address inv = vm.envOr(key, address(0));
-            if (inv == address(0)) continue;
-            registry.grantRole(StoexRoles.USER_ROLE, inv);
-            trade.grantRole(StoexRoles.USER_ROLE, inv);
-            console2.log("Granted USER_ROLE to investor", inv);
-        }
 
         vm.stopBroadcast();
         console2.log("ConfigureRoles completed");

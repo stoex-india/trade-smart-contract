@@ -6,13 +6,13 @@ pragma solidity ^0.8.24;
 /// @dev Only the `TradeManager` proxy address may `lockTokens` / `unlockTokens` / `releaseEscrow` (set once via `setTradeManager`).
 /// Invariant: sum of active locks per wallet ≤ `GoldNFT.userHolding(wallet)`. `getAvailableBalance` = holding minus locked.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
+import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {IGoldNFT} from "./interfaces/IGoldNFT.sol";
 
-contract EscrowVault is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
+contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgradeable {
     uint8 public version;
 
     IGoldNFT public goldNFT;
@@ -38,11 +38,11 @@ contract EscrowVault is Initializable, AccessControlUpgradeable, UUPSUpgradeable
         _disableInitializers();
     }
 
-    function initialize(address admin, address goldNFT_) external initializer {
-        if (admin == address(0) || goldNFT_ == address(0)) revert ZeroAddress();
+    function initialize(address deployer_, address goldNFT_) external initializer {
+        if (deployer_ == address(0) || goldNFT_ == address(0)) revert ZeroAddress();
         __AccessControl_init();
         __UUPSUpgradeable_init();
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        __StoexDeployerAdmin_init_unchained(deployer_);
         goldNFT = IGoldNFT(goldNFT_);
         version = 1;
     }

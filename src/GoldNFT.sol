@@ -10,6 +10,7 @@ pragma solidity ^0.8.24;
 /// - Transfers are blocked in `_update` except mint/burn/admin nominee flow (`_nomineeTransferActive`).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -25,7 +26,7 @@ import {IGoldNFT} from "./interfaces/IGoldNFT.sol";
 contract GoldNFT is
     Initializable,
     ERC721URIStorageUpgradeable,
-    AccessControlUpgradeable,
+    StoexDeployerAdminUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     ERC2771ContextUpgradeable,
@@ -64,8 +65,8 @@ contract GoldNFT is
         _disableInitializers();
     }
 
-    function initialize(address admin, address whitelistRegistry_, address trustedForwarder_) external initializer {
-        if (admin == address(0) || whitelistRegistry_ == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
+    function initialize(address deployer_, address whitelistRegistry_, address trustedForwarder_) external initializer {
+        if (deployer_ == address(0) || whitelistRegistry_ == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
 
         __ERC721_init("STOEX Gold Certificate", "STOEX-AU");
         __ERC721URIStorage_init();
@@ -73,8 +74,7 @@ contract GoldNFT is
         __Pausable_init();
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
-
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        __StoexDeployerAdmin_init_unchained(deployer_);
 
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
         _trustedForwarderValue = trustedForwarder_;
@@ -114,7 +114,7 @@ contract GoldNFT is
     }
 
     function _mintCertificate(address user) internal {
-        if (!whitelistRegistry.isEligible(user)) revert NotEligible();
+        if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
         if (tokenIdByBeneficiary[user] != 0) revert AlreadyHasCertificate();
 
         uint256 tokenId = ++nextTokenId;
@@ -139,7 +139,7 @@ contract GoldNFT is
         nonReentrant
         returns (uint256 lotId)
     {
-        if (!whitelistRegistry.isEligible(user)) revert NotEligible();
+        if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
         if (tokenIdByBeneficiary[user] == 0) revert NoCertificate();
         if (grams == 0) revert ZeroAmount();
 
@@ -243,6 +243,10 @@ contract GoldNFT is
         returns (bool)
     {
         return super.supportsInterface(interfaceId);
+    }
+
+    function _canReceiveBuyOrCertificate(address user) private view returns (bool) {
+        return whitelistRegistry.isEligible(user) || whitelistRegistry.isEligibleForRestrictedBuy(user);
     }
 
     function _update(address to, uint256 tokenId, address auth) internal override returns (address) {

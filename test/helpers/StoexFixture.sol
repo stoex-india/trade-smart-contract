@@ -38,6 +38,7 @@ abstract contract StoexFixture is Test {
 
     function setUp() public virtual {
         admin = address(this);
+        address deployer = address(this);
         (ap, apKey) = makeAddrAndKey("ap");
         (vp, vpKey) = makeAddrAndKey("vp");
         (at, atKey) = makeAddrAndKey("at");
@@ -50,7 +51,7 @@ abstract contract StoexFixture is Test {
         address govAddr;
         {
             GovernanceConfig impl = new GovernanceConfig();
-            govAddr = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (admin))));
+            govAddr = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (deployer))));
         }
         gov = GovernanceConfig(govAddr);
 
@@ -58,7 +59,7 @@ abstract contract StoexFixture is Test {
         {
             WhitelistRegistry impl = new WhitelistRegistry();
             regAddr = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (admin, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (deployer, forwarder)))
             );
         }
         registry = WhitelistRegistry(regAddr);
@@ -67,7 +68,7 @@ abstract contract StoexFixture is Test {
         {
             GoldNFT impl = new GoldNFT();
             goldAddr = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (admin, regAddr, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (deployer, regAddr, forwarder)))
             );
         }
         gold = GoldNFT(goldAddr);
@@ -76,7 +77,7 @@ abstract contract StoexFixture is Test {
         {
             EscrowVault impl = new EscrowVault();
             escrowAddr = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (admin, goldAddr)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (deployer, goldAddr)))
             );
         }
         escrow = EscrowVault(escrowAddr);
@@ -85,7 +86,7 @@ abstract contract StoexFixture is Test {
         {
             TimelockController impl = new TimelockController();
             timelockAddr = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (admin)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (deployer)))
             );
         }
         timelock = TimelockController(timelockAddr);
@@ -98,12 +99,19 @@ abstract contract StoexFixture is Test {
                     address(impl),
                     abi.encodeCall(
                         TradeManager.initialize,
-                        (admin, govAddr, regAddr, goldAddr, escrowAddr, timelockAddr, forwarder)
+                        (deployer, govAddr, regAddr, goldAddr, escrowAddr, timelockAddr, forwarder)
                     )
                 )
             );
         }
         trade = TradeManager(tradeAddr);
+
+        gov.setInitialAdmin(admin);
+        registry.setInitialAdmin(admin);
+        gold.setInitialAdmin(admin);
+        escrow.setInitialAdmin(admin);
+        timelock.setInitialAdmin(admin);
+        trade.setInitialAdmin(admin);
 
         trade.setRoutingAddresses(ap, address(0xdead), vaultBk);
         escrow.setTradeManager(tradeAddr);
@@ -131,6 +139,12 @@ abstract contract StoexFixture is Test {
     function _registerVerifiedUser(address u) internal {
         registry.registerUser(keccak256(abi.encodePacked("u", u)), u, "kyc");
         registry.verifyKYC(u);
+        registry.grantRole(StoexRoles.USER_ROLE, u);
+        trade.grantRole(StoexRoles.USER_ROLE, u);
+    }
+
+    function _registerPendingKycUser(address u) internal {
+        registry.registerUser(keccak256(abi.encodePacked("p", u)), u, "kyc");
         registry.grantRole(StoexRoles.USER_ROLE, u);
         trade.grantRole(StoexRoles.USER_ROLE, u);
     }

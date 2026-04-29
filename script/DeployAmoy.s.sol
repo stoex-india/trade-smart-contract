@@ -15,13 +15,16 @@ import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 
 /// @notice UUPS deployment for Polygon Amoy. Example:
 /// `forge script script/DeployAmoy.s.sol:DeployAmoy --rpc-url amoy --broadcast`
+/// @dev `PRIVATE_KEY` = **deployer** (temporary; no admin rights until `setInitialAdmin`). `INITIAL_ADMIN` = operations admin (defaults to deployer).
+/// If `INITIAL_ADMIN` != deployer, this script only wires routing when you re-run with deployer equal to `INITIAL_ADMIN`, or use `WireProxiesAdmin.s.sol` with the admin key.
 contract DeployAmoy is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
-        address admin = vm.addr(pk);
-        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", admin);
+        address deployer = vm.addr(pk);
+        address initialAdmin = vm.envOr("INITIAL_ADMIN", deployer);
+        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", initialAdmin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
-        address vaultBk = vm.envOr("VAULT_BOOKKEEPING", admin);
+        address vaultBk = vm.envOr("VAULT_BOOKKEEPING", initialAdmin);
         string memory forwarderName = vm.envOr("FORWARDER_NAME", string("STOEX Forwarder"));
 
         vm.startBroadcast(pk);
@@ -30,14 +33,14 @@ contract DeployAmoy is Script {
         address gov;
         {
             GovernanceConfig impl = new GovernanceConfig();
-            gov = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (admin))));
+            gov = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (deployer))));
         }
 
         address registry;
         {
             WhitelistRegistry impl = new WhitelistRegistry();
             registry = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (admin, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (deployer, forwarder)))
             );
         }
 
@@ -45,7 +48,7 @@ contract DeployAmoy is Script {
         {
             GoldNFT impl = new GoldNFT();
             gold = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (admin, registry, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (deployer, registry, forwarder)))
             );
         }
 
@@ -53,7 +56,7 @@ contract DeployAmoy is Script {
         {
             EscrowVault impl = new EscrowVault();
             escrow = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (admin, gold)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (deployer, gold)))
             );
         }
 
@@ -61,7 +64,7 @@ contract DeployAmoy is Script {
         {
             TimelockController impl = new TimelockController();
             timelock = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (admin)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (deployer)))
             );
         }
 
@@ -71,16 +74,28 @@ contract DeployAmoy is Script {
             trade = address(
                 new ERC1967Proxy(
                     address(impl),
-                    abi.encodeCall(TradeManager.initialize, (admin, gov, registry, gold, escrow, timelock, forwarder))
+                    abi.encodeCall(
+                        TradeManager.initialize, (deployer, gov, registry, gold, escrow, timelock, forwarder)
+                    )
                 )
             );
         }
 
-        TradeManager(trade).setRoutingAddresses(apPayout, rSink, vaultBk);
+        GovernanceConfig(gov).setInitialAdmin(initialAdmin);
+        WhitelistRegistry(registry).setInitialAdmin(initialAdmin);
+        GoldNFT(gold).setInitialAdmin(initialAdmin);
+        EscrowVault(escrow).setInitialAdmin(initialAdmin);
+        TimelockController(timelock).setInitialAdmin(initialAdmin);
+        TradeManager(trade).setInitialAdmin(initialAdmin);
 
-        EscrowVault(escrow).setTradeManager(trade);
-        TimelockController(timelock).setTradeManager(trade);
-        GoldNFT(gold).grantRole(StoexRoles.TRADE_MANAGER_ROLE, trade);
+        if (initialAdmin == deployer) {
+            TradeManager(trade).setRoutingAddresses(apPayout, rSink, vaultBk);
+            EscrowVault(escrow).setTradeManager(trade);
+            TimelockController(timelock).setTradeManager(trade);
+            GoldNFT(gold).grantRole(StoexRoles.TRADE_MANAGER_ROLE, trade);
+        } else {
+            console2.log("INITIAL_ADMIN != deployer: run WireProxiesAdmin.s.sol with admin PRIVATE_KEY");
+        }
 
         vm.stopBroadcast();
 
@@ -91,5 +106,6 @@ contract DeployAmoy is Script {
         console2.log("EscrowVault", escrow);
         console2.log("TimelockController", timelock);
         console2.log("TradeManager", trade);
+        console2.log("INITIAL_ADMIN", initialAdmin);
     }
 }
