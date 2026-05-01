@@ -58,7 +58,7 @@ forge test -vv
 Install Foundry, then work in this package:
 
 ```shell
-cd stoex-gold-contracts
+cd trade-smart-contract
 cp .env.example .env
 ```
 
@@ -77,46 +77,44 @@ Optional deploy tuning:
 - `VAULT_BOOKKEEPING` — whitelisted account whose `GoldNFT.userHolding` backs **burn** adjustments; fund it via normal buy/mint flows before burning (defaults to **`INITIAL_ADMIN`** when wired in-script).
 - `FORWARDER_NAME` — EIP-712 domain name used by deployed `ERC2771Forwarder` (default: `STOEX Forwarder`).
 
+For **`forge script ... --verify`** (Polygon Amoy source verification), set **`POLYGONSCAN_API_KEY`** in `.env` (same name as in `foundry.toml` under `[etherscan]`). Get a key from [Polygonscan API](https://docs.polygonscan.com/getting-started/viewing-api-usage-statistics). If you deploy without it, contracts still deploy; only verification fails—omit `--verify` or verify later with `forge verify-contract`.
+
 ### 3) Deploy to Amoy
 
 Dry run (no transaction broadcast):
 
 ```shell
-forge script script/DeployAmoy.s.sol:DeployAmoy --rpc-url amoy -vvv
-```
-
-Broadcast (sends transactions):
-
-```shell
 source .env
-forge script script/DeployAmoy.s.sol:DeployAmoy --rpc-url $AMOY_RPC_URL --broadcast --verify
+forge script script/DeployAmoy.s.sol:DeployAmoy --rpc-url $AMOY_RPC_URL -vvv
 ```
 
-**If broadcast flakes:** Public RPCs often drop transactions from the mempool when the fee is tight or the endpoint is busy. You may see `dropped from the mempool` and, on Foundry 1.5.x, a crash (`attempt to divide by zero` in `broadcast.rs`) — that is a [known Foundry bug](https://github.com/foundry-rs/foundry/issues/13507) when receipts are missing, not a fault in this repo. Mitigations:
-
-1. **Send slowly** (one tx at a time, waits for receipts): add `--slow`.
-2. **Raise fees** so txs are not evicted: e.g. `--gas-estimate-multiplier 130` and/or `--priority-gas-price 35gwei` (tune to current Amoy conditions).
-3. **Resume** after a partial run: rerun the **same** command with `--resume` (keep the same RPC and script); Foundry replays pending txs from the local broadcast journal.
-4. **Try another RPC** (Alchemy, QuickNode, or a dedicated Amoy URL) if Infura keeps dropping txs.
-5. **Confirm on-chain** before copying addresses into `.env`: if the process crashed mid-broadcast, the addresses printed during simulation may not all exist on-chain — check Polygonscan for the deployer account’s recent contracts.
-
-Example resilient broadcast:
+Broadcast (deploy only — no explorer verification):
 
 ```shell
 source .env
 forge script script/DeployAmoy.s.sol:DeployAmoy \
   --rpc-url $AMOY_RPC_URL \
   --broadcast \
-  --verify \
   --slow \
-  --gas-estimate-multiplier 130
+  --gas-estimate-multiplier 130 \
+  --priority-gas-price 35gwei
 ```
+
+Optional: append **`--verify`** only if **`POLYGONSCAN_API_KEY`** is set in `.env` (see §2).
+
+**Amoy gas tip:** If the RPC returns `transaction gas price below minimum` / `gas tip cap … minimum needed 25000000000`, the chain requires a **priority fee of at least ~25 gwei**. Set **`--priority-gas-price 35gwei`** (or higher if the network is busy). Without this, Forge can submit txs with a near‑zero tip and the node will reject them before anything is mined.
+
+**If broadcast flakes:** Public RPCs often drop transactions from the mempool when the fee is tight or the endpoint is busy. You may see `dropped from the mempool` and, on Foundry 1.5.x, a crash (`attempt to divide by zero` in `broadcast.rs`) — that is a [known Foundry bug](https://github.com/foundry-rs/foundry/issues/13507) when receipts are missing, not a fault in this repo. Mitigations:
+
+1. **Send slowly** (one tx at a time, waits for receipts): add `--slow`.
+2. **Raise fees** so txs are not evicted: `--gas-estimate-multiplier 130` and **`--priority-gas-price 35gwei`** (raise if needed).
+3. **Resume** after a partial run: rerun the **same** command with `--resume` (keep the same RPC and script); Foundry replays pending txs from the local broadcast journal.
+4. **Try another RPC** (Alchemy, QuickNode, or a dedicated Amoy URL) if Infura keeps dropping txs.
+5. **Confirm on-chain** before copying addresses into `.env`: if the process crashed mid-broadcast, the addresses printed during simulation may not all exist on-chain — check Polygonscan for the deployer account’s recent contracts.
 
 If you see `EIP-3855 is not supported` for chain 80002, that comes from the RPC’s capability reporting; Polygon Amoy supports modern opcodes. A different RPC URL often clears the warning.
 
 **If you see `could not instantiate forked environment` / `dns error` / `Could not resolve host`:** The RPC hostname in `AMOY_RPC_URL` did not resolve or was unreachable (offline Wi‑Fi, VPN/DNS issues, corporate firewall, or a typo in the URL). Confirm with `curl -I "$AMOY_RPC_URL"` (or open the URL in a browser if it is a dashboard URL only). Try another resolver (e.g. system settings → DNS), disconnect VPN, or switch `AMOY_RPC_URL` to another Amoy HTTPS RPC (Alchemy, QuickNode, or [Polygon public endpoints](https://polygon.technology/blog/introducing-the-polygon-zkevm-and-polygon-pos-amoy-testnet)). Ensure the value in `.env` has no surrounding quotes or line breaks.
-
-NOTE : If above command still not works, remove --verify and try again. 
 
 Copy from the console output into `.env`:
 
@@ -209,6 +207,8 @@ Set investor slots in `.env`:
 
 - `INVESTOR_1` … `INVESTOR_20` (wallets to onboard)
 - optional `INVESTOR_1_KYC_REF` … `INVESTOR_20_KYC_REF` (defaults to `KYC-<n>`)
+- optional `INVESTOR_1_VERIFY_KYC` … `INVESTOR_20_VERIFY_KYC` (`true|false`, per-investor override)
+- optional global `SKIP_KYC_VERIFY` fallback (`true|false`)
 
 Then run:
 
@@ -229,7 +229,7 @@ forge script script/OnboardInvestors.s.sol:OnboardInvestors \
 What this script does for each configured investor wallet:
 
 1. `WhitelistRegistry.registerUser(userId, wallet, kycRef)`
-2. `WhitelistRegistry.verifyKYC(wallet)` — **skipped** if `SKIP_KYC_VERIFY=true` (users stay **Pending** and may **buy only** within `nonKycMaxHoldingCap`; run `verifyKYC` later for full access)
+2. `WhitelistRegistry.verifyKYC(wallet)` — controlled per investor by `INVESTOR_<n>_VERIFY_KYC` (if set). If unset, falls back to global `SKIP_KYC_VERIFY` (users skipped remain **Pending** and may **buy only** within `nonKycMaxHoldingCap`)
 3. Grants **`USER_ROLE`** on both `WhitelistRegistry` and `TradeManager`
 
 `userId` is deterministic in this script: `keccak256("INVESTOR_<n>|<wallet>")`.
@@ -241,6 +241,12 @@ What this script does for each configured investor wallet:
 
 ```shell
 SKIP_KYC_VERIFY=true forge script script/OnboardInvestors.s.sol:OnboardInvestors --rpc-url $AMOY_RPC_URL --broadcast
+
+# Example mixed onboarding: investor 1 pending, investor 2 verified
+# INVESTOR_1=0x...
+# INVESTOR_1_VERIFY_KYC=false
+# INVESTOR_2=0x...
+# INVESTOR_2_VERIFY_KYC=true
 ```
 
 Quick verification with `cast` (example for `INVESTOR_1`):
@@ -468,6 +474,92 @@ GASLESS_PARALLEL=true GASLESS_FLOWS=buy,sell,redeem,mint,burn npm run run:gasles
 
 `run:gasless` uses `/typed-data` + wallet signatures + `/relay` for gasless request creation/proposal, then performs the PRD approval chain and `executeRequest` with configured role wallets.
 Use `GASLESS_FLOWS` to select a subset (example: `GASLESS_FLOWS=buy,sell`).
+
+#### Step 8.1 - Shared prechecks (same intent as Step 7)
+
+Before running any gasless flow:
+
+- Deploy is complete and `.env` addresses are correct (`TRADE_MANAGER`, `WHITELIST_REGISTRY`, `GOLD_NFT`, etc.).
+- Roles are configured (Step 5) and investors onboarded (Step 6).
+- `relayer/.env` is filled (`RPC_URL`, `RELAYER_PRIVATE_KEY`, `ERC2771_FORWARDER`, `TRADE_MANAGER`, all role private keys used by the runner).
+- In `relayer/config/operations.example.json`, each flow you want to test has `"enabled": true`.
+
+Start relayer:
+
+```shell
+cd relayer
+npm install
+npm start
+```
+
+In another terminal, run one flow at a time (recommended):
+
+```shell
+cd relayer
+GASLESS_FLOWS=buy GASLESS_PARALLEL=false npm run run:gasless
+```
+
+#### Step 8.2 - Gasless Buy flow (one-by-one)
+
+```shell
+cd relayer
+GASLESS_FLOWS=buy GASLESS_PARALLEL=false npm run run:gasless
+```
+
+Expected: gasless `createBuyRequest` via forwarder, then AP -> AT approvals and admin execute by runner.
+
+#### Step 8.3 - Gasless Sell flow (one-by-one)
+
+Precondition: investor already has enough holding.
+
+```shell
+cd relayer
+GASLESS_FLOWS=sell GASLESS_PARALLEL=false npm run run:gasless
+```
+
+Expected: gasless sell request creation, escrow lock/release path, AP -> AT -> execute.
+
+#### Step 8.4 - Gasless Redeem flow (one-by-one)
+
+Precondition: investor has enough holding and is not timelocked.
+
+```shell
+cd relayer
+GASLESS_FLOWS=redeem GASLESS_PARALLEL=false npm run run:gasless
+```
+
+Expected: AP -> VP -> PAP -> AT approvals (or VP omitted when disabled), then execute.
+
+#### Step 8.5 - Gasless Mint flow (one-by-one)
+
+Precondition: `MINT_CREDIT_TO` is configured in `relayer/.env` and is eligible.
+
+```shell
+cd relayer
+GASLESS_FLOWS=mint GASLESS_PARALLEL=false npm run run:gasless
+```
+
+Expected: gasless `proposeMint`, then policy approvals and execute.
+
+#### Step 8.6 - Gasless Burn flow (one-by-one)
+
+Precondition: `vaultBookkeeping` has sufficient holding.
+
+```shell
+cd relayer
+GASLESS_FLOWS=burn GASLESS_PARALLEL=false npm run run:gasless
+```
+
+Expected: gasless `proposeBurn`, then policy approvals and execute.
+
+#### Step 8.7 - Optional batch run
+
+Once individual flows pass, run all together:
+
+```shell
+cd relayer
+GASLESS_FLOWS=buy,sell,redeem,mint,burn GASLESS_PARALLEL=false npm run run:gasless
+```
 
 Endpoints:
 

@@ -17,7 +17,8 @@ import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 /// - `PRIVATE_KEY` (must hold `DEFAULT_ADMIN_ROLE` on registry / trade), `TRADE_MANAGER`, `WHITELIST_REGISTRY`
 ///
 /// Optional:
-/// - `SKIP_KYC_VERIFY=true` — leave users in **Pending** KYC so they may **buy only** (restricted cap); call `verifyKYC` later for full access.
+/// - `SKIP_KYC_VERIFY=true` — global default: leave users in **Pending** KYC (restricted buy only).
+/// - `INVESTOR_<n>_VERIFY_KYC=true|false` — per-investor override; takes precedence over `SKIP_KYC_VERIFY`.
 ///
 /// Optional investor slots:
 /// - `INVESTOR_1` .. `INVESTOR_20` (wallet addresses)
@@ -54,12 +55,15 @@ contract OnboardInvestors is Script {
                 console2.log("registerUser skipped/already set", investor);
             }
 
+            string memory verifyKycKey = string.concat(investorKey, "_VERIFY_KYC");
+            bool verifyKycForInvestor = vm.envOr(verifyKycKey, !skipKycVerify);
+
             profile = registry.getProfile(investor);
-            if (!skipKycVerify && profile.kycStatus != StoexTypes.KYCStatus.Verified) {
+            if (verifyKycForInvestor && profile.kycStatus != StoexTypes.KYCStatus.Verified) {
                 registry.verifyKYC(investor);
                 console2.log("KYC verified", investor);
-            } else if (skipKycVerify) {
-                console2.log("verifyKYC skipped (SKIP_KYC_VERIFY)", investor);
+            } else if (!verifyKycForInvestor) {
+                console2.log("verifyKYC skipped (per-investor/global flag)", investor);
             } else {
                 console2.log("verifyKYC skipped/already verified", investor);
             }

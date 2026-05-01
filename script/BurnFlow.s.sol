@@ -9,6 +9,8 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 /// @title BurnFlow
 /// @notice PRD burn flow: AP propose -> VP approve -> AT approve -> ADMIN execute.
 contract BurnFlow is Script {
+    bytes32 private constant _DEFAULT_BURN_REF = 0x4255524e2d5245462d3030310000000000000000000000000000000000000000;
+
     function run() external {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
 
@@ -18,7 +20,7 @@ contract BurnFlow is Script {
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
         uint256 grams = vm.envOr("BURN_GRAMS", uint256(500));
-        bytes32 referenceId = vm.envOr("BURN_REF_ID", bytes32("BURN-REF-001"));
+        bytes32 referenceId = vm.envOr("BURN_REF_ID", _DEFAULT_BURN_REF);
         string memory reason = vm.envOr("BURN_REASON", string("Ops burn"));
 
         vm.startBroadcast(apPk);

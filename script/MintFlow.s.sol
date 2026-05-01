@@ -9,6 +9,9 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 /// @title MintFlow
 /// @notice PRD mint flow: AP propose -> VP approve -> AT approve -> ADMIN execute.
 contract MintFlow is Script {
+    bytes32 private constant _DEFAULT_VAULT_RECEIPT_ID = 0x5641554c542d524350542d303031000000000000000000000000000000000000;
+    bytes32 private constant _DEFAULT_BATCH_ID = 0x42415443482d3030310000000000000000000000000000000000000000000000;
+
     function run() external {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
 
@@ -19,11 +22,11 @@ contract MintFlow is Script {
 
         uint256 grams = vm.envOr("MINT_GRAMS", uint256(1000));
         address creditTo = vm.envAddress("MINT_CREDIT_TO");
-        bytes32 vaultReceiptId = vm.envOr("MINT_VAULT_RECEIPT_ID", bytes32("VAULT-RCPT-001"));
+        bytes32 vaultReceiptId = vm.envOr("MINT_VAULT_RECEIPT_ID", _DEFAULT_VAULT_RECEIPT_ID);
 
         StoexTypes.MintLotMeta memory lot = StoexTypes.MintLotMeta({
             vaultReceiptId: vaultReceiptId,
-            batchId: vm.envOr("MINT_BATCH_ID", bytes32("BATCH-001")),
+            batchId: vm.envOr("MINT_BATCH_ID", _DEFAULT_BATCH_ID),
             purity: uint16(vm.envOr("MINT_PURITY", uint256(999))),
             depositTimestamp: vm.envOr("MINT_DEPOSIT_TS", block.timestamp),
             apId: vm.envOr("MINT_AP_ID", vm.addr(apPk)),

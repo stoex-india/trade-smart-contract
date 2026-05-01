@@ -9,6 +9,8 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 /// @title SellFlow
 /// @notice PRD sell flow: USER create -> AP approve -> AT approve -> ADMIN execute.
 contract SellFlow is Script {
+    bytes32 private constant _DEFAULT_PAYOUT_REF = 0x53454c4c2d5245462d3030310000000000000000000000000000000000000000;
+
     function run() external {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
 
@@ -18,7 +20,7 @@ contract SellFlow is Script {
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
         uint256 grams = vm.envOr("SELL_GRAMS", uint256(500));
-        bytes32 payoutRef = vm.envOr("SELL_PAYOUT_REF", bytes32("SELL-REF-001"));
+        bytes32 payoutRef = vm.envOr("SELL_PAYOUT_REF", _DEFAULT_PAYOUT_REF);
 
         vm.startBroadcast(userPk);
         uint256 requestId = trade.createSellRequest(grams, payoutRef);

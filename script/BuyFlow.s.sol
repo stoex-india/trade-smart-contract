@@ -9,6 +9,8 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 /// @title BuyFlow
 /// @notice PRD buy flow: USER create -> AP approve -> AT approve -> ADMIN execute.
 contract BuyFlow is Script {
+    bytes32 private constant _DEFAULT_PAYMENT_REF = 0x4255592d5245462d303031000000000000000000000000000000000000000000;
+
     function run() external {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
 
@@ -18,7 +20,7 @@ contract BuyFlow is Script {
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
         uint256 grams = vm.envOr("BUY_GRAMS", uint256(1000));
-        bytes32 paymentRef = vm.envOr("BUY_PAYMENT_REF", bytes32("BUY-REF-001"));
+        bytes32 paymentRef = vm.envOr("BUY_PAYMENT_REF", _DEFAULT_PAYMENT_REF);
 
         vm.startBroadcast(userPk);
         uint256 requestId = trade.createBuyRequest(grams, paymentRef);

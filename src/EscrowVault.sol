@@ -55,8 +55,12 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     }
 
     modifier onlyTradeManager() {
-        if (msg.sender != tradeManager) revert NotTradeManager();
+        _onlyTradeManager();
         _;
+    }
+
+    function _onlyTradeManager() private view {
+        if (msg.sender != tradeManager) revert NotTradeManager();
     }
 
     function lockTokens(address wallet, uint256 grams, StoexTypes.EscrowReason reason, uint256 requestId)

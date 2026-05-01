@@ -9,6 +9,8 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 /// @title RedeemFlow
 /// @notice PRD redeem flow: USER create -> AP approve -> VP approve -> PAP approve -> AT approve -> ADMIN execute.
 contract RedeemFlow is Script {
+    bytes32 private constant _DEFAULT_DELIVERY_REF = 0x52454445454d2d5245462d303031000000000000000000000000000000000000;
+
     function run() external {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
 
@@ -20,7 +22,7 @@ contract RedeemFlow is Script {
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
         uint256 grams = vm.envOr("REDEEM_GRAMS", uint256(1000));
-        bytes32 deliveryRef = vm.envOr("REDEEM_DELIVERY_REF", bytes32("REDEEM-REF-001"));
+        bytes32 deliveryRef = vm.envOr("REDEEM_DELIVERY_REF", _DEFAULT_DELIVERY_REF);
 
         vm.startBroadcast(userPk);
         uint256 requestId = trade.createRedeemRequest(grams, deliveryRef);
