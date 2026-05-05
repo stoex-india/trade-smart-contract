@@ -28,5 +28,20 @@ interface IGoldNFT {
 
     function decreaseSupply(address user, uint256 grams, StoexTypes.TxType txType, uint256 requestId) external;
 
+    /// @notice Moves milligrams from AP pool to a user (buy path). Does not increase `totalGoldSupply`.
+    function transferFromAPToUser(
+        address user,
+        uint256 grams,
+        StoexTypes.MintLotMeta calldata lot,
+        uint256 requestId,
+        StoexTypes.TxType historyKind
+    ) external returns (uint256 lotId);
+
     function totalGoldSupply() external view returns (uint256);
+
+    /// @notice Gold reserved for user buys (Asset Provider pool). Mutated on mint, burn, buy, sell as described in PRD.
+    function totalAssetProviderBalance() external view returns (uint256);
+
+    /// @notice Gold held by end users (beneficiaries): `totalGoldSupply - totalAssetProviderBalance`.
+    function circulatingSupply() external view returns (uint256);
 }

@@ -6,7 +6,8 @@ solc_version = "0.8.24"
 optimizer = true
 # Lower runs shrink bytecode (TradeManager is near the 24,576 B EIP-170 limit on Amoy/mainnet).
 optimizer_runs = 1
-via_ir = false
+# Required so `TradeManager` stays under the 24,576 B EIP-170 contract size limit on Amoy/mainnet.
+via_ir = true
 # Smaller runtime bytecode; verify still works if your workflow needs metadata on-chain.
 bytecode_hash = "none"
 cbor_metadata = false

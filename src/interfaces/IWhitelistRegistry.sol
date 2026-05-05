@@ -9,8 +9,8 @@ interface IWhitelistRegistry {
     /// @notice Full platform eligibility: KYC verified, whitelisted wallet, active, within risk policy.
     function isEligible(address wallet) external view returns (bool);
 
-    /// @notice Registered user pending KYC may buy only, subject to `GovernanceConfig.nonKycMaxHoldingCap` (not sell/redeem/mint paths).
-    function isEligibleForRestrictedBuy(address wallet) external view returns (bool);
+    /// @notice Registered user who is not yet KYC-verified may buy only (non-KYC path), subject to `GovernanceConfig.nonKycMaxBuyFiatAmount` (not sell/redeem/mint paths).
+    function isEligibleForNonKycUser(address wallet) external view returns (bool);
 
     function getProfile(address wallet) external view returns (StoexTypes.UserProfile memory);
 }

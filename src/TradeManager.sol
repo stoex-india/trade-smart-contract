@@ -2,14 +2,15 @@
 pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — TradeManager
-/// @notice **Central orchestrator** for PRD trade requests: Buy, Sell, Redeem, Mint, Burn — propose → ordered approvals → `executeRequest` (admin) **or** `executeWithCoSignatures` (EIP-712 batch).
+/// @notice **Central orchestrator** for PRD trade requests: **Buy** completes in `createBuyRequest` (auto credit, no admin execute). Other flows: propose → approvals → `executeRequest` (admin) **or** `executeWithCoSignatures` (EIP-712 batch).
 /// @dev UUPS upgradeable. Wiring:
 /// - Reads policies from `GovernanceConfig` (caps, expiry, approval order).
-/// - Checks `WhitelistRegistry.isEligible` for user-facing operations.
+/// - Checks `WhitelistRegistry.isEligible` / `isEligibleForNonKycUser` for user-facing operations.
 /// - Uses `EscrowVault` for sell/redeem pending locks; `TimelockController` blocks sell/redeem when wallet or any user lot is locked.
 /// - Mutates `GoldNFT` only via `TRADE_MANAGER_ROLE`.
 /// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (burn debits this whitelisted account).
-/// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest`; `DEFAULT_ADMIN_ROLE` for `executeRequest` and upgrades.
+/// **Gold amounts** in request structs and checks are **integer milligrams (mg)**.
+/// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -75,6 +76,8 @@ contract TradeManager is
         uint256 approvalsDone;
         StoexTypes.MintLotMeta mintLot;
         bool escrowLocked;
+        uint256 fiatValue;
+        bytes32 txDetailsHash;
     }
 
     mapping(uint256 => TradeRequest) private _requests;
@@ -82,11 +85,18 @@ contract TradeManager is
 
     mapping(uint256 => uint256) public coSignNonce;
 
+    /// @dev Cumulative executed buy `fiatValue` for non-KYC users (INR minor units); capped by `GovernanceConfig.nonKycMaxBuyFiatAmount`.
+    mapping(address => uint256) private _nonKycFiatPurchased;
+
     bytes32 private constant CO_SIGN_TYPEHASH =
         keccak256("CoSignBatch(uint256 requestId,uint256 nonce,uint256 deadline)");
 
     event RequestCreated(
-        uint256 indexed requestId, StoexTypes.RequestType requestType, address indexed initiator, uint256 grams
+        uint256 indexed requestId,
+        StoexTypes.RequestType requestType,
+        address indexed initiator,
+        uint256 grams,
+        uint256 fiatValue
     );
     event RequestApproved(uint256 indexed requestId, bytes32 indexed role, address approver);
     event RequestRejected(uint256 indexed requestId, bytes32 indexed role, address rejector, string reason);
@@ -164,37 +174,33 @@ contract TradeManager is
         _unpause();
     }
 
-    function createBuyRequest(uint256 grams, bytes32 paymentRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
+    /// @param weightMg Gold amount in **milligrams** (must meet `minimumBuyGoldValueInMg` when set, and `maxGramsPerTx` cap).
+    /// @param fiat_value INR minor units for this leg (e.g. paise); non-KYC cumulative cap uses this field.
+    /// @param payment_ref Off-chain payment correlation id.
+    /// @param txDetailsHash Audit hash for rails / settlement metadata.
+    function createBuyRequest(uint256 weightMg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)
+        external
+        onlyRole(StoexRoles.USER_ROLE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
         if (!routingConfigured) revert RoutingNotSet();
         address user = _msgSender();
-        _checkGrams(grams);
+        _checkBuyGoldAmount(weightMg);
+        if (fiat_value == 0) revert ZeroFiatValue();
+        if (goldNFT.totalAssetProviderBalance() < weightMg) revert InsufficientApInventory();
+
         if (whitelistRegistry.isEligible(user)) {
-            _checkBuyCap(grams);
-        } else if (whitelistRegistry.isEligibleForRestrictedBuy(user)) {
-            _checkNonKycHoldingCap(user, grams);
+            _checkBuyCap(weightMg);
+        } else if (whitelistRegistry.isEligibleForNonKycUser(user)) {
+            _checkNonKycFiatCap(user, fiat_value);
         } else {
             revert NotEligible();
         }
 
         requestId = ++nextRequestId;
-        uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Buy,
-            status: StoexTypes.RequestStatus.Proposed,
-            initiator: user,
-            targetUser: user,
-            grams: grams,
-            paymentRefId: paymentRefId,
-            vaultReceiptId: bytes32(0),
-            reason: "",
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: _emptyLot(),
-            escrowLocked: false
-        });
-
-        emit RequestCreated(requestId, StoexTypes.RequestType.Buy, user, grams);
+        _finalizeBuy(requestId, user, weightMg, fiat_value, payment_ref, txDetailsHash);
     }
 
     function createSellRequest(uint256 grams, bytes32 payoutRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
@@ -221,10 +227,12 @@ contract TradeManager is
             expiresAt: exp,
             approvalsDone: 0,
             mintLot: _emptyLot(),
-            escrowLocked: true
+            escrowLocked: true,
+            fiatValue: 0,
+            txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, grams);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, grams, 0);
     }
 
     function createRedeemRequest(uint256 grams, bytes32 deliveryRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
@@ -251,10 +259,12 @@ contract TradeManager is
             expiresAt: exp,
             approvalsDone: 0,
             mintLot: _emptyLot(),
-            escrowLocked: true
+            escrowLocked: true,
+            fiatValue: 0,
+            txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, grams);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, grams, 0);
     }
 
     function proposeMint(uint256 grams, address creditTo, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
@@ -287,10 +297,12 @@ contract TradeManager is
             expiresAt: exp,
             approvalsDone: 0,
             mintLot: m,
-            escrowLocked: false
+            escrowLocked: false,
+            fiatValue: 0,
+            txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, _msgSender(), grams);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, _msgSender(), grams, 0);
     }
 
     function proposeBurn(uint256 grams, bytes32 referenceId, string calldata reason_)
@@ -318,10 +330,12 @@ contract TradeManager is
             expiresAt: exp,
             approvalsDone: 0,
             mintLot: _emptyLot(),
-            escrowLocked: false
+            escrowLocked: false,
+            fiatValue: 0,
+            txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, _msgSender(), grams);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, _msgSender(), grams, 0);
     }
 
     function approveRequest(uint256 requestId) external whenNotPaused nonReentrant {
@@ -398,6 +412,7 @@ contract TradeManager is
 
     function executeRequest(uint256 requestId) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
         TradeRequest storage r = _requests[requestId];
+        if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
         if (r.status != StoexTypes.RequestStatus.ATApproved) revert NotFullyApproved();
         _executeTrade(requestId, r);
         r.status = StoexTypes.RequestStatus.Executed;
@@ -412,6 +427,7 @@ contract TradeManager is
     {
         if (block.timestamp > deadline) revert SignatureDeadline();
         TradeRequest storage r = _requests[requestId];
+        if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
         if (block.timestamp > r.expiresAt) revert Expired();
         if (r.approvalsDone != 0) revert AlreadyProgressed();
         if (r.status != StoexTypes.RequestStatus.Proposed) revert BadStatus();
@@ -487,21 +503,51 @@ contract TradeManager is
         }
     }
 
+    /// @dev Assumes `createBuyRequest` already validated pool, caps, and eligibility (same tx, nonReentrant).
+    function _finalizeBuy(
+        uint256 requestId,
+        address user,
+        uint256 weightMg,
+        uint256 fiat_value,
+        bytes32 payment_ref,
+        bytes32 txDetailsHash_
+    ) private {
+        if (goldNFT.tokenIdByBeneficiary(user) == 0) {
+            goldNFT.mintCertificateForTrade(user);
+        }
+        goldNFT.transferFromAPToUser(user, weightMg, _emptyLot(), requestId, StoexTypes.TxType.Buy);
+
+        if (whitelistRegistry.isEligible(user)) {
+            _accrueBuy(weightMg);
+        } else {
+            _nonKycFiatPurchased[user] += fiat_value;
+        }
+
+        uint256 exp = block.timestamp + governance.requestExpiryDuration();
+        _requests[requestId] = TradeRequest({
+            requestType: StoexTypes.RequestType.Buy,
+            status: StoexTypes.RequestStatus.Executed,
+            initiator: user,
+            targetUser: user,
+            grams: weightMg,
+            paymentRefId: payment_ref,
+            vaultReceiptId: bytes32(0),
+            reason: "",
+            createdAt: block.timestamp,
+            expiresAt: exp,
+            approvalsDone: 0,
+            mintLot: _emptyLot(),
+            escrowLocked: false,
+            fiatValue: fiat_value,
+            txDetailsHash: txDetailsHash_
+        });
+
+        emit RequestCreated(requestId, StoexTypes.RequestType.Buy, user, weightMg, fiat_value);
+        emit RequestExecuted(requestId, StoexTypes.RequestType.Buy);
+    }
+
     function _executeTrade(uint256 requestId, TradeRequest storage r) private {
-        if (r.requestType == StoexTypes.RequestType.Buy) {
-            if (whitelistRegistry.isEligible(r.targetUser)) {
-                _checkBuyCap(r.grams);
-                _accrueBuy(r.grams);
-            } else if (whitelistRegistry.isEligibleForRestrictedBuy(r.targetUser)) {
-                _checkNonKycHoldingCap(r.targetUser, r.grams);
-            } else {
-                revert NotEligible();
-            }
-            if (goldNFT.tokenIdByBeneficiary(r.targetUser) == 0) {
-                goldNFT.mintCertificateForTrade(r.targetUser);
-            }
-            goldNFT.increaseSupply(r.targetUser, r.grams, _emptyLot(), requestId, StoexTypes.TxType.Buy);
-        } else if (r.requestType == StoexTypes.RequestType.Sell) {
+        if (r.requestType == StoexTypes.RequestType.Sell) {
             _requireEligible(r.targetUser);
             _checkSellCap(r.grams);
             _accrueSell(r.grams);
@@ -553,14 +599,22 @@ contract TradeManager is
         if (grams > governance.maxGramsPerTx()) revert ExceedsMax();
     }
 
+    /// @dev Buy-specific: milligram bounds including admin `minimumBuyGoldValueInMg` (skipped when that value is 0).
+    function _checkBuyGoldAmount(uint256 weightMg) private view {
+        if (weightMg == 0) revert ZeroAmount();
+        if (weightMg > governance.maxGramsPerTx()) revert ExceedsMax();
+        uint256 minMg = governance.minimumBuyGoldValueInMg();
+        if (minMg > 0 && weightMg < minMg) revert BelowMinBuyGold();
+    }
+
     function _checkBuyCap(uint256 grams) private view {
         uint256 day = block.timestamp / 1 days;
         uint256 used = _buyDay == day ? _buyDayGrams : 0;
         if (used + grams > governance.dailyBuyCap()) revert CapBuy();
     }
 
-    function _checkNonKycHoldingCap(address user, uint256 grams) private view {
-        if (goldNFT.userHolding(user) + grams > governance.nonKycMaxHoldingCap()) revert CapBuyNonKyc();
+    function _checkNonKycFiatCap(address user, uint256 fiatValue_) private view {
+        if (_nonKycFiatPurchased[user] + fiatValue_ > governance.nonKycMaxBuyFiatAmount()) revert CapBuyNonKyc();
     }
 
     function _checkSellCap(uint256 grams) private view {
@@ -622,7 +676,7 @@ contract TradeManager is
         return ERC2771ContextUpgradeable._msgData();
     }
 
-    uint256[35] private __gap;
+    uint256[34] private __gap;
 
     error ZeroAddress();
     error NotEligible();
@@ -650,4 +704,8 @@ contract TradeManager is
     error SignatureDeadline();
     error RoutingNotSet();
     error AlreadySet();
+    error ZeroFiatValue();
+    error InsufficientApInventory();
+    error BelowMinBuyGold();
+    error BuyUsesAutoExecution();
 }

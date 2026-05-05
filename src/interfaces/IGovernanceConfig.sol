@@ -22,7 +22,11 @@ interface IGovernanceConfig {
 
     function goldPrecision() external view returns (uint8);
 
-    function nonKycMaxHoldingCap() external view returns (uint256);
+    /// @notice Max cumulative INR notional (minor units, e.g. paise) for non-KYC buy path; enforced against buy `fiat_value`.
+    function nonKycMaxBuyFiatAmount() external view returns (uint256);
+
+    /// @notice Minimum buy quantity in milligrams (set 0 to disable the minimum floor for buys).
+    function minimumBuyGoldValueInMg() external view returns (uint256);
 
     function vpRequiredForApprovals() external view returns (bool);
 }

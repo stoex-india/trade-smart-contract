@@ -14,6 +14,12 @@
 .cursorignorerulesrulesrulesrulesrules
 broadcast/
 
+# npm (relayer and any root-level JS tooling)
+node_modules/
+
 # Foundry generated artifacts/cache
 cache/
 out/
+
+# npm (relayer and any root-level JS tooling)
+node_modules/

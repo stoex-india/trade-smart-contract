@@ -27,7 +27,7 @@ forge test -vv
 | `script/GovernanceAdminFlags.s.sol` | Admin toggles `GovernanceConfig.vpRequiredForApprovals` |
 | `script/ConfigureRoles.s.sol` | Grant AP/VP/AT/PAP/Auditor + optional forwarder rotation (**admin** key) |
 | `script/OnboardInvestors.s.sol` | Register + verify KYC + grant `USER_ROLE` for `INVESTOR_1..20` |
-| `script/BuyFlow.s.sol` | Buy request lifecycle (USER -> AP -> AT -> ADMIN execute) |
+| `script/BuyFlow.s.sol` | **`createBuyRequest` only** — buy settles in one tx (no admin execute) |
 | `script/SellFlow.s.sol` | Sell request lifecycle (USER -> AP -> AT -> ADMIN execute) |
 | `script/RedeemFlow.s.sol` | Redeem lifecycle (USER -> AP -> VP -> PAP -> AT -> ADMIN execute) |
 | `script/MintFlow.s.sol` | Mint lifecycle (AP -> VP -> AT -> ADMIN execute) |
@@ -44,14 +44,24 @@ forge test -vv
 ### Deployer vs operations admin (RBAC)
 
 - **Deployer** (`deployer` on-chain): the wallet passed into each contract’s `initialize`. It has **no** `DEFAULT_ADMIN_ROLE` after deployment. It may call **`setInitialAdmin(admin)` exactly once** per proxy to grant the operations admin.
-- **Admin** (`DEFAULT_ADMIN_ROLE`): pauses, upgrades (UUPS), `TradeManager.executeRequest`, forwarder rotation, `GovernanceConfig.setVpRequiredForApprovals`, registry KYC, etc. Admins rotate with **`transferAdmin(newAdmin)`** (callable only by the current admin, on each contract where rotation is needed).
-- **Asset Trustee (`AT_ROLE`)** still updates economic policy on `GovernanceConfig` (caps, approval *matrices*, `nonKycMaxHoldingCap`, etc.). **VP on/off** is admin-only and implemented by filtering `VP_ROLE` out of the *effective* approval path for Redeem / Mint / Burn when disabled (see `getApprovalPolicy`).
+- **Admin** (`DEFAULT_ADMIN_ROLE`): pauses, upgrades (UUPS), `TradeManager.executeRequest` (**Sell / Redeem / Mint / Burn** only — **not Buy**), `GovernanceConfig.setMinimumBuyGoldValueInMg`, forwarder rotation, `GovernanceConfig.setVpRequiredForApprovals`, registry KYC, etc. Admins rotate with **`transferAdmin(newAdmin)`** (callable only by the current admin, on each contract where rotation is needed).
+- **Asset Trustee (`AT_ROLE`)** still updates economic policy on `GovernanceConfig` (caps, approval *matrices*, `nonKycMaxBuyFiatAmount`, etc.). **VP on/off** is admin-only and implemented by filtering `VP_ROLE` out of the *effective* approval path for Redeem / Mint / Burn when disabled (see `getApprovalPolicy`).
 
 ### KYC tiers (buy vs full access)
 
-- **`registerUser`** creates a **Pending** KYC profile. **`isEligibleForRestrictedBuy`** is true for Pending users (whitelisted wallet, active, within risk rules). They may **`createBuyRequest` only**, using a configurable **max total holding cap** **`GovernanceConfig.nonKycMaxHoldingCap`** (Asset Trustee adjusts via **`setNonKycMaxHoldingCap`**). Enforcement is `current userHolding + buy grams <= cap`.
+- **`registerUser`** creates a **Pending** KYC profile. **`isEligibleForNonKycUser`** is true for Pending users (whitelisted wallet, active, within risk rules). They may **`createBuyRequest` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**: cumulative executed **`fiat_value`** (INR minor units, e.g. paise) must stay within cap (Asset Trustee adjusts via **`setNonKycMaxBuyFiatAmount`**).
 - **`verifyKYC`** (admin) moves a user to **Verified** → **`isEligible`** is true → sell, redeem, full daily buy cap (`dailyBuyCap`), mint/burn bookkeeping paths, nominee transfer, etc., as before.
-- **`rejectKYC`** users are not eligible for restricted buy.
+- **`rejectKYC`** users are not eligible for the non-KYC buy path.
+
+### Gold supply accounting (`GoldNFT`)
+
+All gold integers are **milligrams (mg)** unless noted otherwise.
+
+- **`totalGoldSupply`**: mg tracked on-chain; increases only when **`increaseSupply`** runs (mint path), decreases on redeem/burn (**`decreaseSupply`** with `Redeem` / `Burn`).
+- **`totalAssetProviderBalance`**: mg in the **Asset Provider buy pool**. Buys call **`transferFromAPToUser`** (same tx as **`createBuyRequest`**); users do not mint new mg on buy. Sells return mg to the pool (`Sell`). **`seedPoolInventory`** (admin) increases both **`totalGoldSupply`** and **`totalAssetProviderBalance`** when onboarding vaulted inventory into the pool.
+- **`circulatingSupply()`** = **`totalGoldSupply - totalAssetProviderBalance`**.
+
+**Buy** validates pool depth, eligibility, `minimumBuyGoldValueInMg`, per-tx / daily caps, and non-KYC fiat cap; then **credits the user in the same transaction** (no `executeRequest`).
 
 ### 1) Install Foundry and clone
 
@@ -229,7 +239,7 @@ forge script script/OnboardInvestors.s.sol:OnboardInvestors \
 What this script does for each configured investor wallet:
 
 1. `WhitelistRegistry.registerUser(userId, wallet, kycRef)`
-2. `WhitelistRegistry.verifyKYC(wallet)` — controlled per investor by `INVESTOR_<n>_VERIFY_KYC` (if set). If unset, falls back to global `SKIP_KYC_VERIFY` (users skipped remain **Pending** and may **buy only** within `nonKycMaxHoldingCap`)
+2. `WhitelistRegistry.verifyKYC(wallet)` — controlled per investor by `INVESTOR_<n>_VERIFY_KYC` (if set). If unset, falls back to global `SKIP_KYC_VERIFY` (users skipped remain **Pending** and may **buy only** within `nonKycMaxBuyFiatAmount`)
 3. Grants **`USER_ROLE`** on both `WhitelistRegistry` and `TradeManager`
 
 `userId` is deterministic in this script: `keccak256("INVESTOR_<n>|<wallet>")`.
@@ -237,7 +247,7 @@ What this script does for each configured investor wallet:
 `USER_ROLE` on `TradeManager` is required for `createBuyRequest` / `createSellRequest` / `createRedeemRequest` (sell/redeem still require **verified** `isEligible`).  
 `USER_ROLE` on `WhitelistRegistry` is required for `requestWalletChange` (**verified** users only for meaningful migration flows).
 
-**Restricted buy onboarding example:**
+**Non-KYC (pending) buy onboarding example:**
 
 ```shell
 SKIP_KYC_VERIFY=true forge script script/OnboardInvestors.s.sol:OnboardInvestors --rpc-url $AMOY_RPC_URL --broadcast
@@ -256,11 +266,12 @@ USER_ROLE=$(cast keccak "USER_ROLE")
 
 # Full eligibility (verified KYC)
 cast call $WHITELIST_REGISTRY "isEligible(address)(bool)" $INVESTOR_1 --rpc-url $AMOY_RPC_URL
-# Pending-KYC buy path (buy only, restricted cap)
-cast call $WHITELIST_REGISTRY "isEligibleForRestrictedBuy(address)(bool)" $INVESTOR_1 --rpc-url $AMOY_RPC_URL
+# Pending-KYC buy path (buy only; cumulative fiat cap)
+cast call $WHITELIST_REGISTRY "isEligibleForNonKycUser(address)(bool)" $INVESTOR_1 --rpc-url $AMOY_RPC_URL
 # Policy flags
-cast call $GOVERNANCE_CONFIG "nonKycMaxHoldingCap()(uint256)" --rpc-url $AMOY_RPC_URL
+cast call $GOVERNANCE_CONFIG "nonKycMaxBuyFiatAmount()(uint256)" --rpc-url $AMOY_RPC_URL
 cast call $GOVERNANCE_CONFIG "vpRequiredForApprovals()(bool)" --rpc-url $AMOY_RPC_URL
+cast call $GOVERNANCE_CONFIG "minimumBuyGoldValueInMg()(uint256)" --rpc-url $AMOY_RPC_URL
 
 # USER_ROLE on both contracts
 cast call $WHITELIST_REGISTRY "hasRole(bytes32,address)(bool)" $USER_ROLE $INVESTOR_1 --rpc-url $AMOY_RPC_URL
@@ -277,13 +288,13 @@ For **strict EIP-2771 gasless** testing, use Step 8 `relayer/src/gasless-runner.
 
 | Flow | Who starts | Approval order (default) | Execution |
 |------|------------|--------------------------|-----------|
-| **Buy** | Investor (`createBuyRequest`) | AP → AT | `executeRequest` (admin) or `executeWithCoSignatures` |
+| **Buy** | Investor (`createBuyRequest(weightMg, fiat_value, payment_ref, txDetailsHash)`) | *none* | *Immediate* — request stored as **Executed**; `GoldNFT.transferFromAPToUser` in same call |
 | **Sell** | Investor (`createSellRequest`, escrow locks) | AP → AT | Admin execute |
 | **Redeem** | Investor (`createRedeemRequest`) | AP → VP → PAP → AT (VP step omitted if `vpRequiredForApprovals` is false) | Admin execute |
 | **Mint** | AP (`proposeMint`) | VP → AT (VP omitted if disabled) | Admin execute |
 | **Burn** | AP (`proposeBurn`) | VP → AT (VP omitted if disabled) | Admin execute (debits `vaultBookkeeping`) |
 
-**Admin executor** holds `DEFAULT_ADMIN_ROLE` on `TradeManager` and calls `executeRequest(requestId)` after status reaches fully approved (`ATApproved` in storage).
+**Admin executor** holds `DEFAULT_ADMIN_ROLE` on `TradeManager` and calls `executeRequest(requestId)` for **non-Buy** flows after status reaches fully approved (`ATApproved`). **`executeRequest` reverts** if `requestType == Buy` (buys are never pending).
 
 **VP optional**: On `GovernanceConfig`, **`vpRequiredForApprovals`** (default `true`) controls whether `VP_ROLE` appears in the **effective** policy returned by **`getApprovalPolicy`** for **Redeem**, **Mint**, and **Burn**. Toggle with **`setVpRequiredForApprovals`** (admin) or:
 
@@ -291,7 +302,9 @@ For **strict EIP-2771 gasless** testing, use Step 8 `relayer/src/gasless-runner.
 VP_REQUIRED=false forge script script/GovernanceAdminFlags.s.sol:GovernanceAdminFlags --rpc-url $AMOY_RPC_URL --broadcast
 ```
 
-Buy/Sell default policies are unchanged (no VP step). Co-signatures and `approveRequest` both use the filtered policy.
+**Buy** does not use `getApprovalPolicy` (no AP/AT, no admin execute). **Sell** default policy is unchanged (AP → AT, no VP step). Co-signatures and `approveRequest` apply to **non-Buy** request types with a non-empty policy.
+
+**`GovernanceConfig`**: `minimumBuyGoldValueInMg` (admin, **`setMinimumBuyGoldValueInMg`**) enforces a floor on buy size; set to **0** to disable the floor. **Amount caps** (`dailyBuyCap`, `maxGramsPerTx`, `minRedeemQuantity`, etc.) are expressed in **mg** (`goldPrecision` default is **0** for whole milligram integers).
 
 **EIP-712 co-sign**: integrators hash with `TradeManager.hashCoSignBatch(requestId, nonce, deadline)` using domain `StoexGoldTrade` / version `1`, then call `executeWithCoSignatures` (see tests in `StoexPRD.t.sol`).
 
@@ -307,12 +320,16 @@ Add these in `.env` for script-driven flow execution:
 
 You can keep one key for all roles in testing if the same wallet holds those roles.
 
-#### Step 7.1 - Buy flow script (PRD order: USER -> AP -> AT -> EXECUTE)
+#### Step 7.1 - Buy flow script (single user transaction)
 
 Optional inputs:
 
-- `BUY_GRAMS` (default `1000`)
+- `BUY_WEIGHT_MG` (or legacy `BUY_GRAMS`) — gold amount in **milligrams** (default `1000` mg)
+- `BUY_FIAT_VALUE` (default `1`) — INR minor units for `fiat_value` (must be non-zero on-chain)
 - `BUY_PAYMENT_REF` (default `"BUY-REF-001"` as bytes32)
+- `BUY_TX_DETAILS_HASH` (optional `bytes32`) — bank/UPI audit hash
+
+Precondition: **`GoldNFT.totalAssetProviderBalance`** must cover the buy (fund pool via inventory ops / **`seedPoolInventory`** / sells returning to pool).
 
 Run:
 
@@ -472,7 +489,7 @@ npm run run:gasless
 GASLESS_PARALLEL=true GASLESS_FLOWS=buy,sell,redeem,mint,burn npm run run:gasless
 ```
 
-`run:gasless` uses `/typed-data` + wallet signatures + `/relay` for gasless request creation/proposal, then performs the PRD approval chain and `executeRequest` with configured role wallets.
+`run:gasless` uses `/typed-data` + wallet signatures + `/relay` for gasless **create** / **propose**. **Buy** completes in that single forwarded tx (no follow-up `executeRequest`). Other flows still run approvals + admin `executeRequest` from the runner.
 Use `GASLESS_FLOWS` to select a subset (example: `GASLESS_FLOWS=buy,sell`).
 
 #### Step 8.1 - Shared prechecks (same intent as Step 7)
@@ -506,7 +523,7 @@ cd relayer
 GASLESS_FLOWS=buy GASLESS_PARALLEL=false npm run run:gasless
 ```
 
-Expected: gasless `createBuyRequest` via forwarder, then AP -> AT approvals and admin execute by runner.
+Expected: gasless `createBuyRequest` via forwarder — buy **settles in that tx** (runner checks request status is **Executed**).
 
 #### Step 8.3 - Gasless Sell flow (one-by-one)
 
@@ -573,7 +590,7 @@ Example flow for gasless `buy`:
 1. Client calls `/typed-data` with:
    - `operation: "buy"`
    - `from: investor address`
-   - `args: [grams, paymentRefId]`
+   - `args: [weightMg, fiat_value, payment_ref, txDetailsHash]`
 2. Client signs returned typed data.
 3. Client calls `/relay` with same payload + `signature`.
 4. Relayer submits through `ERC2771Forwarder.execute`.
@@ -588,10 +605,18 @@ Read eligibility:
 cast call $WHITELIST_REGISTRY "isEligible(address)(bool)" $INVESTOR_WALLET --rpc-url $AMOY_RPC_URL
 ```
 
-Read holding:
+Read holding (balance is **milligrams**):
 
 ```shell
 cast call $GOLD_NFT "userHolding(address)(uint256)" $INVESTOR_WALLET --rpc-url $AMOY_RPC_URL
+```
+
+Supply snapshot:
+
+```shell
+cast call $GOLD_NFT "totalGoldSupply()(uint256)" --rpc-url $AMOY_RPC_URL
+cast call $GOLD_NFT "totalAssetProviderBalance()(uint256)" --rpc-url $AMOY_RPC_URL
+cast call $GOLD_NFT "circulatingSupply()(uint256)" --rpc-url $AMOY_RPC_URL
 ```
 
 ---

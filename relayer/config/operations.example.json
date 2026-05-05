@@ -8,7 +8,7 @@
     "buy": {
       "enabled": true,
       "target": "tradeManager",
-      "fragment": "function createBuyRequest(uint256 grams,bytes32 paymentRefId)",
+      "fragment": "function createBuyRequest(uint256 weightMg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)",
       "gas": 700000
     },
     "sell": {

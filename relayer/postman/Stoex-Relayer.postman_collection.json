@@ -1,0 +1,72 @@
+{
+  "info": {
+    "name": "Stoex Gasless Relayer",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:8787" },
+    { "key": "apiKey", "value": "" },
+    { "key": "userAddress", "value": "0x0000000000000000000000000000000000000000" },
+    { "key": "signature", "value": "0x" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [{ "key": "value", "value": "{{apiKey}}", "type": "string" }, { "key": "key", "value": "x-api-key", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "v1 Health",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/v1/health"
+      }
+    },
+    {
+      "name": "v1 Operations",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/v1/operations"
+      }
+    },
+    {
+      "name": "Precheck Buy",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"from\": \"{{userAddress}}\",\n  \"weightMg\": \"100000\",\n  \"fiatValue\": \"1\",\n  \"paymentRef\": \"BUY-REF-001\",\n  \"txDetailsHash\": \"0x0000000000000000000000000000000000000000000000000000000000000000\"\n}\n"
+        },
+        "url": "{{baseUrl}}/v1/precheck/buy"
+      }
+    },
+    {
+      "name": "Meta-tx Typed Data (buy)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"operation\": \"buy\",\n  \"from\": \"{{userAddress}}\",\n  \"args\": [\n    \"100000\",\n    \"1\",\n    \"0x0000000000000000000000000000000000000000000000000000000000000000\",\n    \"0x0000000000000000000000000000000000000000000000000000000000000000\"\n  ],\n  \"deadlineSeconds\": 900\n}\n"
+        },
+        "url": "{{baseUrl}}/v1/meta-tx/typed-data"
+      }
+    },
+    {
+      "name": "Meta-tx Relay (buy)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"operation\": \"buy\",\n  \"from\": \"{{userAddress}}\",\n  \"args\": [\n    \"100000\",\n    \"1\",\n    \"0x0000000000000000000000000000000000000000000000000000000000000000\",\n    \"0x0000000000000000000000000000000000000000000000000000000000000000\"\n  ],\n  \"deadlineSeconds\": 900,\n  \"signature\": \"{{signature}}\"\n}\n"
+        },
+        "url": "{{baseUrl}}/v1/meta-tx/relay"
+      }
+    }
+  ]
+}

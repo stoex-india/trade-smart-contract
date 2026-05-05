@@ -23,7 +23,7 @@ if (!process.env.USER_PRIVATE_KEY) {
 }
 
 const tradeAbi = [
-  "event RequestCreated(uint256 indexed requestId, uint8 requestType, address indexed initiator, uint256 grams)",
+  "event RequestCreated(uint256 indexed requestId, uint8 requestType, address indexed initiator, uint256 grams, uint256 fiatValue)",
   "function approveRequest(uint256 requestId)",
   "function executeRequest(uint256 requestId)",
   "function getRequestStatus(uint256 requestId) view returns (uint8)",
@@ -42,23 +42,31 @@ function toBytes32(v, fallback) {
 }
 
 async function relayerCall(path, body) {
+  const headers = { "content-type": "application/json" };
+  if (process.env.RELAYER_API_KEY) {
+    headers["x-api-key"] = process.env.RELAYER_API_KEY;
+  }
   const res = await fetch(`${RELAYER_BASE_URL}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify(body)
   });
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(`Relayer ${path} failed: ${json.error ?? res.statusText}`);
+    const msg =
+      typeof json.error === "object" && json.error?.message != null
+        ? json.error.message
+        : json.error ?? res.statusText;
+    throw new Error(`Relayer ${path} failed: ${msg}`);
   }
   return json;
 }
 
 async function relayMetaTx(operation, signer, args) {
   const from = await signer.getAddress();
-  const typed = await relayerCall("/typed-data", { operation, from, args });
+  const typed = await relayerCall(`/v1/meta-tx/typed-data`, { operation, from, args });
   const signature = await signer.signTypedData(typed.domain, typed.types, typed.message);
-  const relayed = await relayerCall("/relay", { operation, from, args, signature });
+  const relayed = await relayerCall(`/v1/meta-tx/relay`, { operation, from, args, signature });
   return relayed.txHash;
 }
 
@@ -89,11 +97,23 @@ async function approveAndExecute(requestId, rolesInOrder) {
 }
 
 async function runBuy() {
-  const grams = BigInt(process.env.BUY_GRAMS ?? "1000");
+  const weightMg = BigInt(process.env.BUY_WEIGHT_MG ?? process.env.BUY_GRAMS ?? "100000");
+  const fiatValue = BigInt(process.env.BUY_FIAT_VALUE ?? "1");
   const paymentRef = toBytes32(process.env.BUY_PAYMENT_REF, "BUY-REF-001");
-  const txHash = await relayMetaTx("buy", userSigner, [grams.toString(), paymentRef]);
+  const txDetailsHash =
+    process.env.BUY_TX_DETAILS_HASH && process.env.BUY_TX_DETAILS_HASH.startsWith("0x")
+      ? process.env.BUY_TX_DETAILS_HASH
+      : ethers.ZeroHash;
+  const txHash = await relayMetaTx("buy", userSigner, [
+    weightMg.toString(),
+    fiatValue.toString(),
+    paymentRef,
+    txDetailsHash
+  ]);
+  await provider.waitForTransaction(txHash, 1, 120_000);
   const requestId = await waitRequestId(txHash);
-  await approveAndExecute(requestId, ["AP", "AT"]);
+  const status = await tradeAdmin.getRequestStatus(requestId);
+  if (Number(status) !== 5) throw new Error(`Buy request ${requestId} not Executed (status=${status})`);
   return { flow: "buy", requestId: requestId.toString(), txHash };
 }
 

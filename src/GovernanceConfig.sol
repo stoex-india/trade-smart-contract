@@ -6,7 +6,7 @@ pragma solidity ^0.8.24;
 /// @dev UUPS upgradeable. Role model:
 /// - `DEFAULT_ADMIN_ROLE`: upgrade authority (`_authorizeUpgrade`) and role administration.
 /// - `AT_ROLE` (`StoexRoles.AT_ROLE`): Asset Trustee — may change any policy parameter and approval matrices.
-/// Gram amounts are fixed-point integers with `goldPrecision` decimals (default 3 ⇒ values are “milligrams” per gram scale).
+/// @notice Gold **amounts** (caps, holdings, lot sizes) are **integer milligrams** (mg). `goldPrecision` is retained for legacy readers; new logic uses raw mg.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -30,12 +30,16 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     /// @notice When false, `VP_ROLE` steps are omitted from approval policies for Redeem, Mint, and Burn (read via `getApprovalPolicy`).
     bool public vpRequiredForApprovals;
 
-    /// @notice Max total holding for registered users who are not yet KYC-verified (`WhitelistRegistry.isEligibleForRestrictedBuy`).
-    uint256 public nonKycMaxHoldingCap;
+    /// @notice Max cumulative INR notional (minor units, e.g. paise 1/100 INR) for non-KYC buy path (`WhitelistRegistry.isEligibleForNonKycUser`).
+    uint256 public nonKycMaxBuyFiatAmount;
+
+    /// @notice Minimum buy size in **milligrams**; admin may set to 0 to disable the floor (not recommended). Enforced on every `createBuyRequest`.
+    uint256 public minimumBuyGoldValueInMg;
 
     event PolicyUpdated(string parameter, bytes32 key);
     event VpRequirementChanged(bool required);
-    event NonKycMaxHoldingCapChanged(uint256 cap);
+    event NonKycMaxBuyFiatAmountChanged(uint256 amount);
+    event MinimumBuyGoldValueInMgChanged(uint256 valueMg);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -54,15 +58,16 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         vpRequiredForApprovals = true;
 
         requestExpiryDuration = 7 days;
-        // Gram amounts use goldPrecision (3) fixed point: value = grams * 10**goldPrecision
-        uint256 g = 10 ** 3;
-        dailyBuyCap = 10_000 * g;
-        dailySellCap = 5_000 * g;
-        nonKycMaxHoldingCap = 1_000 * g;
-        minRedeemQuantity = 10 * g;
-        maxGramsPerTx = 1_000 * g;
+        // Amounts in milligrams (e.g. 10_000 g ≈ 10_000_000 mg daily buy cap)
+        uint256 mgPerKg = 1_000_000;
+        dailyBuyCap = 10 * mgPerKg;
+        dailySellCap = 5 * mgPerKg;
+        nonKycMaxBuyFiatAmount = 50_000_000;
+        minRedeemQuantity = 10_000;
+        maxGramsPerTx = 1 * mgPerKg;
         defaultTimelockDuration = 0;
-        goldPrecision = 3;
+        goldPrecision = 0;
+        minimumBuyGoldValueInMg = 1;
 
         _setDefaultPolicies();
     }
@@ -73,15 +78,18 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         emit VpRequirementChanged(required);
     }
 
-    function setNonKycMaxHoldingCap(uint256 cap) external onlyRole(StoexRoles.AT_ROLE) {
-        nonKycMaxHoldingCap = cap;
-        emit NonKycMaxHoldingCapChanged(cap);
+    function setNonKycMaxBuyFiatAmount(uint256 amount) external onlyRole(StoexRoles.AT_ROLE) {
+        nonKycMaxBuyFiatAmount = amount;
+        emit NonKycMaxBuyFiatAmountChanged(amount);
+    }
+
+    function setMinimumBuyGoldValueInMg(uint256 valueMg) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        minimumBuyGoldValueInMg = valueMg;
+        emit MinimumBuyGoldValueInMgChanged(valueMg);
     }
 
     function _setDefaultPolicies() private {
         delete _approvalPolicy[StoexTypes.RequestType.Buy];
-        _approvalPolicy[StoexTypes.RequestType.Buy].push(StoexRoles.AP_ROLE);
-        _approvalPolicy[StoexTypes.RequestType.Buy].push(StoexRoles.AT_ROLE);
 
         delete _approvalPolicy[StoexTypes.RequestType.Sell];
         _approvalPolicy[StoexTypes.RequestType.Sell].push(StoexRoles.AP_ROLE);
@@ -102,7 +110,7 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         _approvalPolicy[StoexTypes.RequestType.Burn].push(StoexRoles.AT_ROLE);
     }
 
-    /// @notice Replace the ordered list of `AccessControl` role ids that must approve each step for `rt` (e.g. Buy: AP → AT).
+    /// @notice Replace the ordered approval role list for `rt`. **Buy** is settled automatically in `TradeManager.createBuyRequest`; this policy is unused for Buy unless you fork behavior off-chain.
     function setApprovalPolicy(StoexTypes.RequestType rt, bytes32[] calldata roles) external onlyRole(StoexRoles.AT_ROLE) {
         delete _approvalPolicy[rt];
         for (uint256 i = 0; i < roles.length; i++) {

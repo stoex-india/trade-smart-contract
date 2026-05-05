@@ -206,7 +206,7 @@ contract WhitelistRegistry is
     }
 
     /// @inheritdoc IWhitelistRegistry
-    function isEligibleForRestrictedBuy(address wallet) external view override returns (bool) {
+    function isEligibleForNonKycUser(address wallet) external view override returns (bool) {
         if (!_registered[wallet]) return false;
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (p.kycStatus != StoexTypes.KYCStatus.Pending) return false;
