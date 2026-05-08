@@ -34,8 +34,7 @@ forge test -vv
 | `script/BurnFlow.s.sol` | Burn lifecycle (AP -> VP -> AT -> ADMIN execute) |
 | `test/helpers/StoexFixture.sol` | Shared deployment for tests |
 | `test/StoexPRD.t.sol` | PRD-mapped integration tests |
-| `relayer/` | Configurable gasless relayer service (per-operation enable/disable + signer allowlists) |
-| `relayer/src/gasless-runner.js` | End-to-end gasless operation runner (optional parallel mode) |
+| `docs/` | Integration and API documentation for contracts + SDK-driven gasless flows |
 
 ---
 
@@ -134,7 +133,7 @@ Copy from the console output into `.env`:
 - `ESCROW_VAULT` (not read by ConfigureRoles; keep for your records)
 - `TIMELOCK_CONTROLLER`
 - `TRADE_MANAGER`
-- `ERC2771_FORWARDER`
+- `ERC2771_FORWARDER` (Tresori SDK Relayer/Facilitator forwarder contract address, we wont deploy our own forwarder)
 
 `DeployAmoy` always: deploys implementations + proxies, then the **deployer** calls **`setInitialAdmin(INITIAL_ADMIN)`** on every core proxy.
 
@@ -167,7 +166,7 @@ Use **`PRIVATE_KEY` = admin** account (holds `DEFAULT_ADMIN_ROLE` on the proxies
 **Optional** role-holder wallets (omit or `0x0000…` to skip that role):
 
 - `ROLE_AP`, `ROLE_VP`, `ROLE_AT`, `ROLE_PAP`, `ROLE_AUDITOR`
-- `ERC2771_FORWARDER` — only if you need to rotate the trusted forwarder after deploy
+- `RELAYER_SMART_CONTRACT` — Tresori gasless forwarder/relayer contract used as trusted forwarder
 
 Then from the project root (so Foundry loads `./.env`):
 
@@ -284,7 +283,7 @@ cast call $WHITELIST_REGISTRY "getProfile(address)((bytes32,address,uint8,uint8,
 ### 7) Run operations (PRD flows)
 
 All flows go through **TradeManager** unless noted. The scripts below execute the exact PRD approval sequence on-chain.
-For **strict EIP-2771 gasless** testing, use Step 8 `relayer/src/gasless-runner.js` (meta create/propose via forwarder). These Step 7 scripts remain deterministic direct role-by-role runners.
+Step 7 scripts remain deterministic direct role-by-role runners. For user gasless flows in production, use Tresori SDK `writeGaslessMpcSmartContractTransaction(...)` as described in Step 8.
 
 | Flow | Who starts | Approval order (default) | Execution |
 |------|------------|--------------------------|-----------|
@@ -421,7 +420,7 @@ cast call $TRADE_MANAGER "getRequestStatus(uint256)(uint8)" <REQUEST_ID> --rpc-u
 
 Expected status after successful script run: `5` (`Executed`).
 
-### 8) Gasless (ERC-2771) setup
+### 8) Gasless (Tresori SDK EIP-2771)
 
 Contracts with trusted forwarder support in this repo:
 
@@ -429,173 +428,74 @@ Contracts with trusted forwarder support in this repo:
 - `WhitelistRegistry` (user/admin registry functions)
 - `GoldNFT` (AP mint/admin operations)
 
-`DeployAmoy` deploys an `ERC2771Forwarder` and wires it during contract initialization.
+Use Tresori SDK `writeGaslessMpcSmartContractTransaction(...)` for user gasless writes.  
 
-If you ever need to rotate forwarder:
+#### Step 8.1 - Set trusted forwarder to Tresori gasless contract
 
-1. Deploy a new forwarder contract.
-2. Set `ERC2771_FORWARDER` in `.env`.
-3. Run:
+Set in `.env`:
+
+- `RELAYER_SMART_CONTRACT` = Tresori gasless forwarder/relayer contract for the target chain
+
+Run:
 
 ```shell
-forge script script/ConfigureRoles.s.sol:ConfigureRoles --rpc-url $AMOY_RPC_URL --broadcast
+source .env
+forge script script/SetTrustedForwarder.s.sol:SetTrustedForwarder --rpc-url $AMOY_RPC_URL --broadcast
 ```
 
-The script will call:
+This updates:
 
 - `TradeManager.setTrustedForwarder(...)`
 - `WhitelistRegistry.setTrustedForwarder(...)`
 - `GoldNFT.setTrustedForwarder(...)`
 
-#### Relayer server (configurable operations)
-
-1. Configure relayer env:
+Verify trusted forwarder addresses:
 
 ```shell
-cd relayer
-cp .env.example .env
+source .env
+cast call $TRADE_MANAGER "trustedForwarder()(address)" --rpc-url $AMOY_RPC_URL
+cast call $WHITELIST_REGISTRY "trustedForwarder()(address)" --rpc-url $AMOY_RPC_URL
+cast call $GOLD_NFT "trustedForwarder()(address)" --rpc-url $AMOY_RPC_URL
+
+# Optional: compare against expected
+echo "Expected RELAYER_SMART_CONTRACT=$RELAYER_SMART_CONTRACT"
 ```
 
-Set:
+#### Step 8.2 - Frontend/client gasless call shape
 
-- `RPC_URL`
-- `RELAYER_PRIVATE_KEY`
-- `ERC2771_FORWARDER`
-- `TRADE_MANAGER`
-- `OPERATIONS_CONFIG` (defaults to `./config/operations.example.json`)
+Use Tresori SDK:
 
-2. Configure allowed gasless operations in `config/operations.example.json`:
-
-- `enabled: true/false` per operation (turn gasless on/off anytime)
-- `target` contract alias (`tradeManager`, `whitelistRegistry`, `goldNft`)
-- ABI `fragment`
-- `gas` limit
-- optional `allowedSigners` whitelist for sensitive ops (mint/burn/admin)
-
-3. Start server:
-
-```shell
-npm install
-npm start
+```ts
+await TreSori().writeGaslessMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "createBuyRequest",
+  params: [weightMg, fiatValue, paymentRefBytes32, txDetailsHashBytes32],
+  abi: [
+    "function createBuyRequest(uint256 weightMg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
+  ],
+  fromAddress: userMpcWallet,
+  chain: selectedChain,
+  clientShare,
+  sessionId,
+  rpcUrl: AMOY_RPC_URL
+});
 ```
 
-4. Run gasless flow runner (meta-tx create/propose + on-chain approvals/execution):
+Use the same function for:
 
-```shell
-# Sequential (default)
-npm run run:gasless
+- `createSellRequest(...)`
+- `createRedeemRequest(...)`
+- `proposeMint(...)`
+- `proposeBurn(...)`
 
-# Parallel mode for independent test runs
-GASLESS_PARALLEL=true GASLESS_FLOWS=buy,sell,redeem,mint,burn npm run run:gasless
-```
+#### Step 8.3 - Validation checklist
 
-`run:gasless` uses `/typed-data` + wallet signatures + `/relay` for gasless **create** / **propose**. **Buy** completes in that single forwarded tx (no follow-up `executeRequest`). Other flows still run approvals + admin `executeRequest` from the runner.
-Use `GASLESS_FLOWS` to select a subset (example: `GASLESS_FLOWS=buy,sell`).
+For each gasless operation:
 
-#### Step 8.1 - Shared prechecks (same intent as Step 7)
-
-Before running any gasless flow:
-
-- Deploy is complete and `.env` addresses are correct (`TRADE_MANAGER`, `WHITELIST_REGISTRY`, `GOLD_NFT`, etc.).
-- Roles are configured (Step 5) and investors onboarded (Step 6).
-- `relayer/.env` is filled (`RPC_URL`, `RELAYER_PRIVATE_KEY`, `ERC2771_FORWARDER`, `TRADE_MANAGER`, all role private keys used by the runner).
-- In `relayer/config/operations.example.json`, each flow you want to test has `"enabled": true`.
-
-Start relayer:
-
-```shell
-cd relayer
-npm install
-npm start
-```
-
-In another terminal, run one flow at a time (recommended):
-
-```shell
-cd relayer
-GASLESS_FLOWS=buy GASLESS_PARALLEL=false npm run run:gasless
-```
-
-#### Step 8.2 - Gasless Buy flow (one-by-one)
-
-```shell
-cd relayer
-GASLESS_FLOWS=buy GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Expected: gasless `createBuyRequest` via forwarder — buy **settles in that tx** (runner checks request status is **Executed**).
-
-#### Step 8.3 - Gasless Sell flow (one-by-one)
-
-Precondition: investor already has enough holding.
-
-```shell
-cd relayer
-GASLESS_FLOWS=sell GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Expected: gasless sell request creation, escrow lock/release path, AP -> AT -> execute.
-
-#### Step 8.4 - Gasless Redeem flow (one-by-one)
-
-Precondition: investor has enough holding and is not timelocked.
-
-```shell
-cd relayer
-GASLESS_FLOWS=redeem GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Expected: AP -> VP -> PAP -> AT approvals (or VP omitted when disabled), then execute.
-
-#### Step 8.5 - Gasless Mint flow (one-by-one)
-
-Precondition: `MINT_CREDIT_TO` is configured in `relayer/.env` and is eligible.
-
-```shell
-cd relayer
-GASLESS_FLOWS=mint GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Expected: gasless `proposeMint`, then policy approvals and execute.
-
-#### Step 8.6 - Gasless Burn flow (one-by-one)
-
-Precondition: `vaultBookkeeping` has sufficient holding.
-
-```shell
-cd relayer
-GASLESS_FLOWS=burn GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Expected: gasless `proposeBurn`, then policy approvals and execute.
-
-#### Step 8.7 - Optional batch run
-
-Once individual flows pass, run all together:
-
-```shell
-cd relayer
-GASLESS_FLOWS=buy,sell,redeem,mint,burn GASLESS_PARALLEL=false npm run run:gasless
-```
-
-Endpoints:
-
-- `GET /health`
-- `GET /operations`
-- `POST /typed-data` -> returns EIP-712 domain/types/message for wallet signing
-- `POST /relay` -> verifies signature with forwarder and executes forwarded tx
-
-Example flow for gasless `buy`:
-
-1. Client calls `/typed-data` with:
-   - `operation: "buy"`
-   - `from: investor address`
-   - `args: [weightMg, fiat_value, payment_ref, txDetailsHash]`
-2. Client signs returned typed data.
-3. Client calls `/relay` with same payload + `signature`.
-4. Relayer submits through `ERC2771Forwarder.execute`.
-
-Operations can be enabled/disabled without redeploying contracts by changing relayer config and restarting relayer.
+1. `fromAddress` has required role on-chain (`USER_ROLE` for buy/sell/redeem, `AP_ROLE` for mint/burn).
+2. `RequestCreated.initiator` equals MPC user/operator wallet.
+3. Buy settles as `Executed` in same tx.
+4. Non-buy requests follow normal approval/execution path.
 
 ### 9) Useful `cast` examples
 
