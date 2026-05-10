@@ -47,7 +47,7 @@ Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuy
 
 Notes:
 - Buy uses immediate execution path and does not go through `executeRequest`.
-- Amount units in this contract are mg (milligrams) : `grams`.
+- Amount units in this contract are mg (milligrams), even where variable names still use `grams`.
 
 ---
 
@@ -186,6 +186,8 @@ Purpose: timelock enforcement on wallets/lots to prevent premature sell/redeem.
 
 ## Common Integration Notes
 
-- ERC-2771 is used in user-facing contracts (`TradeManager`, `GoldNFT`, `WhitelistRegistry`). Meta-transactions should be relayed through the configured trusted forwarder.
+- ERC-2771 is used in user-facing contracts (`TradeManager`, `GoldNFT`, `WhitelistRegistry`).
+- Set trusted forwarder to Tresori gasless forwarder/relayer contract via `RELAYER_SMART_CONTRACT` and `script/SetTrustedForwarder.s.sol`.
+- User/client gasless writes should use Tresori SDK `writeGaslessMpcSmartContractTransaction(...)`.
 - Check roles before calling write methods; many methods revert when caller lacks required role.
-- Keep amount units consistent (mg) across UI, relayer payloads, and contract calls.
+- Keep amount units consistent (mg) across UI payloads and contract calls.
