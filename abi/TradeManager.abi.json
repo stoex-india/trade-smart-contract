@@ -106,7 +106,7 @@
     "name": "createBuyRequest",
     "inputs": [
       {
-        "name": "weightMg",
+        "name": "weightUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -140,7 +140,7 @@
     "name": "createRedeemRequest",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -164,7 +164,7 @@
     "name": "createSellRequest",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -343,7 +343,7 @@
             "internalType": "address"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -418,7 +418,7 @@
                 "internalType": "uint256"
               },
               {
-                "name": "grams",
+                "name": "amountUg",
                 "type": "uint256",
                 "internalType": "uint256"
               }
@@ -534,7 +534,7 @@
             "internalType": "address"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -609,7 +609,7 @@
                 "internalType": "uint256"
               },
               {
-                "name": "grams",
+                "name": "amountUg",
                 "type": "uint256",
                 "internalType": "uint256"
               }
@@ -832,7 +832,7 @@
     "name": "proposeBurn",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -861,7 +861,7 @@
     "name": "proposeMint",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -916,7 +916,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -1340,7 +1340,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

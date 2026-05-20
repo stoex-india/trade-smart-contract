@@ -19,12 +19,12 @@ contract BurnFlow is Script {
         uint256 vpPk = vm.envOr("VP_PRIVATE_KEY", adminPk);
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
-        uint256 grams = vm.envOr("BURN_GRAMS", uint256(500));
+        uint256 amountUg = vm.envOr("BURN_AMOUNT_UG", uint256(500_000));
         bytes32 referenceId = vm.envOr("BURN_REF_ID", _DEFAULT_BURN_REF);
         string memory reason = vm.envOr("BURN_REASON", string("Ops burn"));
 
         vm.startBroadcast(apPk);
-        uint256 requestId = trade.proposeBurn(grams, referenceId, reason);
+        uint256 requestId = trade.proposeBurn(amountUg, referenceId, reason);
         vm.stopBroadcast();
 
         vm.startBroadcast(vpPk);

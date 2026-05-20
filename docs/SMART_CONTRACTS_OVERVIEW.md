@@ -5,7 +5,7 @@ This document introduces each core contract and summarizes its external/public r
 ## System Architecture (High Level)
 
 - `TradeManager` is the central orchestrator for user and operator trade flows.
-- `GoldNFT` tracks certificate ownership and gold balances (in mg).
+- `GoldNFT` tracks certificate ownership and gold balances (in **µg**).
 - `WhitelistRegistry` gates eligibility and wallet risk/compliance state.
 - `GovernanceConfig` stores configurable policy limits, role-approval policy, and thresholds.
 - `EscrowVault` locks/unlocks user balances for sell/redeem lifecycle.
@@ -13,16 +13,18 @@ This document introduces each core contract and summarizes its external/public r
 
 Most operational writes are role-gated via AccessControl roles defined in `StoexRoles`.
 
+**Gold unit:** all on-chain gold quantities are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`. There is no fractional type on-chain; use `amountUg` fields consistently. Redeploy fresh proxies when upgrading; no in-repo storage migration.
+
 ---
 
 ## `TradeManager`
 
-Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuyRequest`; other request types use propose -> approvals -> execution.
+Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuyRequest`; other request types use propose → approvals → execution.
 
 ### Key Read Endpoints
 
 - `trustedForwarder()`: returns current ERC-2771 trusted forwarder address.
-- `getRequest(uint256 requestId)`: full request struct details.
+- `getRequest(uint256 requestId)`: full request struct (`amountUg`, status, mint lot, etc.).
 - `getRequestStatus(uint256 requestId)`: current status enum for a request.
 - `hashCoSignBatch(uint256 requestId,uint256 nonce,uint256 deadline)`: EIP-712 digest helper for co-sign execution.
 - `getUserRequests(address user,uint256 offset,uint256 limit)`: paginated request IDs for user.
@@ -33,11 +35,11 @@ Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuy
 - `setTrustedForwarder(address)`: admin updates trusted forwarder.
 - `setRoutingAddresses(address assetProviderPayout,address redeemSink,address vaultBookkeeping)`: one-time routing setup.
 - `pause()/unpause()`: admin pause controls.
-- `createBuyRequest(uint256 weightMg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)`: user buy (auto-exec).
-- `createSellRequest(uint256 grams,bytes32 payoutRefId)`: user sell request creation.
-- `createRedeemRequest(uint256 grams,bytes32 deliveryRefId)`: user redeem request creation.
-- `proposeMint(uint256 grams,address creditTo,bytes32 vaultReceiptId,(...lot))`: AP mint proposal.
-- `proposeBurn(uint256 grams,bytes32 referenceId,string reason_)`: AP burn proposal.
+- `createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)`: user buy (auto-exec).
+- `createSellRequest(uint256 amountUg,bytes32 payoutRefId)`: user sell request creation.
+- `createRedeemRequest(uint256 amountUg,bytes32 deliveryRefId)`: user redeem request creation.
+- `proposeMint(uint256 amountUg,address creditTo,bytes32 vaultReceiptId,MintLotMeta lot)`: AP mint proposal.
+- `proposeBurn(uint256 amountUg,bytes32 referenceId,string reason_)`: AP burn proposal.
 - `approveRequest(uint256 requestId)`: role-based approvals.
 - `rejectRequest(uint256 requestId,string reason_)`: reject + optional escrow unlock.
 - `cancelRequest(uint256 requestId)`: initiator cancel while pending.
@@ -46,8 +48,9 @@ Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuy
 - `executeWithCoSignatures(uint256 requestId,uint256 nonce,uint256 deadline,bytes[] signatures)`: batched co-sign execution path.
 
 Notes:
+
 - Buy uses immediate execution path and does not go through `executeRequest`.
-- Amount units in this contract are mg (milligrams), even where variable names still use `grams`.
+- All amount parameters and `TradeRequest.amountUg` are in **µg**.
 
 ---
 
@@ -58,12 +61,12 @@ Purpose: certificate NFT + inventory/accounting ledger for user holdings and AP 
 ### Key Read Endpoints
 
 - `trustedForwarder()`: ERC-2771 trusted forwarder.
-- `getUserHolding(address user)`: user holding in mg.
-- `getMintLot(uint256 lotId)`: mint lot metadata.
+- `userHolding(address user)`: user balance in µg.
+- `getMintLot(uint256 lotId)`: mint lot metadata (`MintLotMeta.amountUg`).
 - `getUserLotIds(address beneficiary)`: lot IDs linked to wallet.
-- `getTxHistory(address user,uint256 start,uint256 end)`: tx history slice.
+- `getTxHistory(address user,uint256 start,uint256 end)`: tx history slice (`TxRecord.amountUg`).
 - `circulatingSupply()`: `totalGoldSupply - totalAssetProviderBalance`.
-- `totalGoldSupply()`, `totalAssetProviderBalance()`, `userHolding(address)`, `tokenIdByBeneficiary(address)`, `beneficiaryOfToken(uint256)`.
+- `totalGoldSupply()`, `totalAssetProviderBalance()`, `tokenIdByBeneficiary(address)`, `beneficiaryOfToken(uint256)`.
 
 ### Key Write Endpoints
 
@@ -72,45 +75,47 @@ Purpose: certificate NFT + inventory/accounting ledger for user holdings and AP 
 - `setBaseURI(string)`: admin metadata base URI.
 - `mintCertificate(address user)`: AP mint certificate.
 - `mintCertificateForTrade(address user)`: trade manager mint cert helper.
-- `increaseSupply(address user,uint256 grams,...)`: trade manager supply increase.
-- `decreaseSupply(address user,uint256 grams,...)`: trade manager supply decrease.
-- `transferFromAPToUser(address user,uint256 grams,...)`: trade manager pool -> user transfer for buy.
+- `increaseSupply(address user,uint256 amountUg,...)`: trade manager supply increase.
+- `decreaseSupply(address user,uint256 amountUg,...)`: trade manager supply decrease.
+- `transferFromAPToUser(address user,uint256 amountUg,...)`: trade manager pool → user transfer for buy.
 - `updateMetadata(uint256 tokenId,string newUri)`: admin metadata update.
 - `nomineeTransfer(address fromBeneficiary,address toCustody)`: admin emergency/custody transfer.
-- `seedPoolInventory(uint256 grams)`: admin adds AP pool inventory.
+- `seedPoolInventory(uint256 amountUg)`: admin adds AP pool inventory (µg).
 - `pause()/unpause()`: admin.
 
 ---
 
 ## `GovernanceConfig`
 
-Purpose: policy and limits configuration contract used by `TradeManager`.
+Purpose: policy and limits configuration contract used by `TradeManager`. All gold caps/limits are **µg**.
 
 ### Key Read Endpoints
 
 - `getApprovalPolicy(RequestType)`: ordered role approvals.
 - `requestExpiryDuration()`: request timeout window.
-- `dailyBuyCap()`, `dailySellCap()`: per-day caps.
-- `minRedeemQuantity()`: minimum redeem amount.
-- `maxGramsPerTx()`: max amount per request.
+- `dailyBuyCap()`, `dailySellCap()`: per-day caps (µg).
+- `minRedeemAmountUg()`: minimum redeem amount (µg).
+- `maxAmountPerTx()`: max amount per request (µg).
 - `defaultTimelockDuration()`: default timelock for lots/wallets.
-- `goldPrecision()`: precision metadata.
+- `goldPrecision()`: off-chain decimal places when displaying grams (default `6`).
 - `nonKycMaxBuyFiatAmount()`: per-user cumulative fiat cap for non-KYC buy.
-- `minimumBuyGoldValueInMg()`: minimum buy threshold in mg.
+- `minimumBuyGoldValueInUg()`: minimum buy threshold (µg).
 - `vpRequiredForApprovals()`: whether VP is mandatory where optional.
 
 ### Key Write Endpoints
 
 - `setVpRequiredForApprovals(bool)`: admin.
 - `setNonKycMaxBuyFiatAmount(uint256)`: AT role.
-- `setMinimumBuyGoldValueInMg(uint256)`: admin.
+- `setMinimumBuyGoldValueInUg(uint256)`: admin.
 - `setApprovalPolicy(RequestType,bytes32[] roles)`: AT role.
-- `setDailyCap(RequestType,uint256)`: AT role.
-- `setMinRedeemQuantity(uint256)`: AT role.
+- `setDailyCap(RequestType,uint256)`: AT role (cap in µg).
+- `setMinRedeemAmountUg(uint256)`: AT role.
 - `setRequestExpiry(uint256)`: AT role.
-- `setMaxGramsPerTx(uint256)`: AT role.
+- `setMaxAmountPerTx(uint256)`: AT role.
 - `setDefaultTimelockDuration(uint256)`: AT role.
 - `setGoldPrecision(uint8)`: AT role.
+
+Default init examples: `minimumBuyGoldValueInUg = 1000` (1 mg), `minRedeemAmountUg = 10_000_000` (10 g), `maxAmountPerTx = 1_000_000_000` (1 kg).
 
 ---
 
@@ -132,7 +137,7 @@ Purpose: identity/KYC/eligibility/risk management for wallets.
 - `verifyKYC(address wallet)`: admin.
 - `rejectKYC(address wallet)`: admin.
 - `whitelistWallet(address wallet)`: admin.
-- `requestWalletChange(address oldWallet,address newWallet)`: user requests migration.
+- `requestWalletChange(address oldWallet,address newWallet)`: user requests wallet change.
 - `approveWalletChange(uint256 changeRequestId)`: AP/AT approval path.
 - `suspendWallet(address wallet,bytes32 caseRef)`: admin.
 - `blacklistWallet(address wallet,bytes32 caseRef)`: admin.
@@ -144,18 +149,18 @@ Purpose: identity/KYC/eligibility/risk management for wallets.
 
 ## `EscrowVault`
 
-Purpose: lock and release user balances for sell/redeem workflows.
+Purpose: lock and release user balances for sell/redeem workflows (amounts in µg).
 
 ### Key Read Endpoints
 
-- `getLockedAmount(address wallet)`: current locked amount.
+- `getLockedAmount(address wallet)`: current locked amount (µg).
 - `getAvailableBalance(address wallet)`: user holding minus locked.
-- `getEscrowDetails(uint256 requestId)`: escrow details for request.
+- `getEscrowDetails(uint256 requestId)`: escrow details (`amountUg`).
 
 ### Key Write Endpoints
 
 - `setTradeManager(address)`: admin sets trade manager once.
-- `lockTokens(address wallet,uint256 grams,EscrowReason,uint256 requestId)`: trade manager locks.
+- `lockTokens(address wallet,uint256 amountUg,EscrowReason,uint256 requestId)`: trade manager locks.
 - `unlockTokens(uint256 requestId)`: trade manager unlocks.
 - `releaseEscrow(uint256 requestId,address destination)`: trade manager final release destination.
 
@@ -190,4 +195,4 @@ Purpose: timelock enforcement on wallets/lots to prevent premature sell/redeem.
 - Set trusted forwarder to Tresori gasless forwarder/relayer contract via `RELAYER_SMART_CONTRACT` and `script/SetTrustedForwarder.s.sol`.
 - User/client gasless writes should use Tresori SDK `writeGaslessMpcSmartContractTransaction(...)`.
 - Check roles before calling write methods; many methods revert when caller lacks required role.
-- Keep amount units consistent (mg) across UI payloads and contract calls.
+- Keep amount units consistent (**µg**) across UI payloads and contract calls; convert to grams only for display.

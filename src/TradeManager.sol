@@ -9,7 +9,7 @@ pragma solidity ^0.8.24;
 /// - Uses `EscrowVault` for sell/redeem pending locks; `TimelockController` blocks sell/redeem when wallet or any user lot is locked.
 /// - Mutates `GoldNFT` only via `TRADE_MANAGER_ROLE`.
 /// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (burn debits this whitelisted account).
-/// **Gold amounts** in request structs and checks are **integer milligrams (mg)**.
+/// **Gold amounts** in request structs and checks are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`.
 /// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
@@ -58,16 +58,16 @@ contract TradeManager is
     uint256 public nextRequestId;
 
     uint256 private _buyDay;
-    uint256 private _buyDayGrams;
+    uint256 private _buyDayAmountUg;
     uint256 private _sellDay;
-    uint256 private _sellDayGrams;
+    uint256 private _sellDayAmountUg;
 
     struct TradeRequest {
         StoexTypes.RequestType requestType;
         StoexTypes.RequestStatus status;
         address initiator;
         address targetUser;
-        uint256 grams;
+        uint256 amountUg;
         bytes32 paymentRefId;
         bytes32 vaultReceiptId;
         string reason;
@@ -95,7 +95,7 @@ contract TradeManager is
         uint256 indexed requestId,
         StoexTypes.RequestType requestType,
         address indexed initiator,
-        uint256 grams,
+        uint256 amountUg,
         uint256 fiatValue
     );
     event RequestApproved(uint256 indexed requestId, bytes32 indexed role, address approver);
@@ -174,11 +174,11 @@ contract TradeManager is
         _unpause();
     }
 
-    /// @param weightMg Gold amount in **milligrams** (must meet `minimumBuyGoldValueInMg` when set, and `maxGramsPerTx` cap).
+    /// @param weightUg Gold amount in **micrograms** (must meet `minimumBuyGoldValueInUg` when set, and `maxAmountPerTx` cap).
     /// @param fiat_value INR minor units for this leg (e.g. paise); non-KYC cumulative cap uses this field.
     /// @param payment_ref Off-chain payment correlation id.
     /// @param txDetailsHash Audit hash for rails / settlement metadata.
-    function createBuyRequest(uint256 weightMg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)
+    function createBuyRequest(uint256 weightUg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)
         external
         onlyRole(StoexRoles.USER_ROLE)
         whenNotPaused
@@ -187,12 +187,12 @@ contract TradeManager is
     {
         if (!routingConfigured) revert RoutingNotSet();
         address user = _msgSender();
-        _checkBuyGoldAmount(weightMg);
+        _checkBuyGoldAmount(weightUg);
         if (fiat_value == 0) revert ZeroFiatValue();
-        if (goldNFT.totalAssetProviderBalance() < weightMg) revert InsufficientApInventory();
+        if (goldNFT.totalAssetProviderBalance() < weightUg) revert InsufficientApInventory();
 
         if (whitelistRegistry.isEligible(user)) {
-            _checkBuyCap(weightMg);
+            _checkBuyCap(weightUg);
         } else if (whitelistRegistry.isEligibleForNonKycUser(user)) {
             _checkNonKycFiatCap(user, fiat_value);
         } else {
@@ -200,26 +200,26 @@ contract TradeManager is
         }
 
         requestId = ++nextRequestId;
-        _finalizeBuy(requestId, user, weightMg, fiat_value, payment_ref, txDetailsHash);
+        _finalizeBuy(requestId, user, weightUg, fiat_value, payment_ref, txDetailsHash);
     }
 
-    function createSellRequest(uint256 grams, bytes32 payoutRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
+    function createSellRequest(uint256 amountUg, bytes32 payoutRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
         if (!routingConfigured) revert RoutingNotSet();
         address user = _msgSender();
         _requireEligible(user);
         _requireNotTimelocked(user);
-        _checkGrams(grams);
-        _checkSellCap(grams);
+        _checkAmountUg(amountUg);
+        _checkSellCap(amountUg);
 
         requestId = ++nextRequestId;
-        escrowVault.lockTokens(user, grams, StoexTypes.EscrowReason.Sell, requestId);
+        escrowVault.lockTokens(user, amountUg, StoexTypes.EscrowReason.Sell, requestId);
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
         _requests[requestId] = TradeRequest({
             requestType: StoexTypes.RequestType.Sell,
             status: StoexTypes.RequestStatus.Proposed,
             initiator: user,
             targetUser: user,
-            grams: grams,
+            amountUg: amountUg,
             paymentRefId: payoutRefId,
             vaultReceiptId: bytes32(0),
             reason: "",
@@ -232,26 +232,26 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, grams, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, amountUg, 0);
     }
 
-    function createRedeemRequest(uint256 grams, bytes32 deliveryRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
+    function createRedeemRequest(uint256 amountUg, bytes32 deliveryRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
         if (!routingConfigured) revert RoutingNotSet();
         address user = _msgSender();
         _requireEligible(user);
         _requireNotTimelocked(user);
-        if (grams < governance.minRedeemQuantity()) revert BelowMinRedeem();
-        _checkGrams(grams);
+        if (amountUg < governance.minRedeemAmountUg()) revert BelowMinRedeem();
+        _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
-        escrowVault.lockTokens(user, grams, StoexTypes.EscrowReason.Redeem, requestId);
+        escrowVault.lockTokens(user, amountUg, StoexTypes.EscrowReason.Redeem, requestId);
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
         _requests[requestId] = TradeRequest({
             requestType: StoexTypes.RequestType.Redeem,
             status: StoexTypes.RequestStatus.Proposed,
             initiator: user,
             targetUser: user,
-            grams: grams,
+            amountUg: amountUg,
             paymentRefId: deliveryRefId,
             vaultReceiptId: bytes32(0),
             reason: "",
@@ -264,10 +264,10 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, grams, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
-    function proposeMint(uint256 grams, address creditTo, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
+    function proposeMint(uint256 amountUg, address creditTo, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
         external
         onlyRole(StoexRoles.AP_ROLE)
         whenNotPaused
@@ -276,12 +276,12 @@ contract TradeManager is
     {
         if (!routingConfigured) revert RoutingNotSet();
         _requireEligible(creditTo);
-        _checkGrams(grams);
+        _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
         StoexTypes.MintLotMeta memory m = lot;
-        m.grams = grams;
+        m.amountUg = amountUg;
         m.vaultReceiptId = vaultReceiptId;
 
         _requests[requestId] = TradeRequest({
@@ -289,7 +289,7 @@ contract TradeManager is
             status: StoexTypes.RequestStatus.Proposed,
             initiator: _msgSender(),
             targetUser: creditTo,
-            grams: grams,
+            amountUg: amountUg,
             paymentRefId: bytes32(0),
             vaultReceiptId: vaultReceiptId,
             reason: "",
@@ -302,10 +302,10 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, _msgSender(), grams, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, _msgSender(), amountUg, 0);
     }
 
-    function proposeBurn(uint256 grams, bytes32 referenceId, string calldata reason_)
+    function proposeBurn(uint256 amountUg, bytes32 referenceId, string calldata reason_)
         external
         onlyRole(StoexRoles.AP_ROLE)
         whenNotPaused
@@ -313,7 +313,7 @@ contract TradeManager is
         returns (uint256 requestId)
     {
         if (!routingConfigured) revert RoutingNotSet();
-        _checkGrams(grams);
+        _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
@@ -322,7 +322,7 @@ contract TradeManager is
             status: StoexTypes.RequestStatus.Proposed,
             initiator: _msgSender(),
             targetUser: address(0),
-            grams: grams,
+            amountUg: amountUg,
             paymentRefId: referenceId,
             vaultReceiptId: bytes32(0),
             reason: reason_,
@@ -335,7 +335,7 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, _msgSender(), grams, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, _msgSender(), amountUg, 0);
     }
 
     function approveRequest(uint256 requestId) external whenNotPaused nonReentrant {
@@ -507,7 +507,7 @@ contract TradeManager is
     function _finalizeBuy(
         uint256 requestId,
         address user,
-        uint256 weightMg,
+        uint256 weightUg,
         uint256 fiat_value,
         bytes32 payment_ref,
         bytes32 txDetailsHash_
@@ -515,10 +515,10 @@ contract TradeManager is
         if (goldNFT.tokenIdByBeneficiary(user) == 0) {
             goldNFT.mintCertificateForTrade(user);
         }
-        goldNFT.transferFromAPToUser(user, weightMg, _emptyLot(), requestId, StoexTypes.TxType.Buy);
+        goldNFT.transferFromAPToUser(user, weightUg, _emptyLot(), requestId, StoexTypes.TxType.Buy);
 
         if (whitelistRegistry.isEligible(user)) {
-            _accrueBuy(weightMg);
+            _accrueBuy(weightUg);
         } else {
             _nonKycFiatPurchased[user] += fiat_value;
         }
@@ -529,7 +529,7 @@ contract TradeManager is
             status: StoexTypes.RequestStatus.Executed,
             initiator: user,
             targetUser: user,
-            grams: weightMg,
+            amountUg: weightUg,
             paymentRefId: payment_ref,
             vaultReceiptId: bytes32(0),
             reason: "",
@@ -542,37 +542,37 @@ contract TradeManager is
             txDetailsHash: txDetailsHash_
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Buy, user, weightMg, fiat_value);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Buy, user, weightUg, fiat_value);
         emit RequestExecuted(requestId, StoexTypes.RequestType.Buy);
     }
 
     function _executeTrade(uint256 requestId, TradeRequest storage r) private {
         if (r.requestType == StoexTypes.RequestType.Sell) {
             _requireEligible(r.targetUser);
-            _checkSellCap(r.grams);
-            _accrueSell(r.grams);
+            _checkSellCap(r.amountUg);
+            _accrueSell(r.amountUg);
             escrowVault.releaseEscrow(requestId, assetProviderPayout);
             r.escrowLocked = false;
-            goldNFT.decreaseSupply(r.targetUser, r.grams, StoexTypes.TxType.Sell, requestId);
+            goldNFT.decreaseSupply(r.targetUser, r.amountUg, StoexTypes.TxType.Sell, requestId);
         } else if (r.requestType == StoexTypes.RequestType.Redeem) {
             _requireEligible(r.targetUser);
             escrowVault.releaseEscrow(requestId, redeemSink);
             r.escrowLocked = false;
-            goldNFT.decreaseSupply(r.targetUser, r.grams, StoexTypes.TxType.Redeem, requestId);
+            goldNFT.decreaseSupply(r.targetUser, r.amountUg, StoexTypes.TxType.Redeem, requestId);
         } else if (r.requestType == StoexTypes.RequestType.Mint) {
             address u = r.targetUser;
             _requireEligible(u);
             if (goldNFT.tokenIdByBeneficiary(u) == 0) {
                 goldNFT.mintCertificateForTrade(u);
             }
-            uint256 lotId = goldNFT.increaseSupply(u, r.grams, r.mintLot, requestId, StoexTypes.TxType.Mint);
+            uint256 lotId = goldNFT.increaseSupply(u, r.amountUg, r.mintLot, requestId, StoexTypes.TxType.Mint);
             uint256 dur = governance.defaultTimelockDuration();
             if (dur > 0) {
                 timelockController.applyMintLotTimelock(lotId, block.timestamp + dur);
             }
         } else if (r.requestType == StoexTypes.RequestType.Burn) {
             _requireEligible(vaultBookkeeping);
-            goldNFT.decreaseSupply(vaultBookkeeping, r.grams, StoexTypes.TxType.Burn, requestId);
+            goldNFT.decreaseSupply(vaultBookkeeping, r.amountUg, StoexTypes.TxType.Burn, requestId);
         }
     }
 
@@ -594,51 +594,51 @@ contract TradeManager is
         }
     }
 
-    function _checkGrams(uint256 grams) private view {
-        if (grams == 0) revert ZeroAmount();
-        if (grams > governance.maxGramsPerTx()) revert ExceedsMax();
+    function _checkAmountUg(uint256 amountUg) private view {
+        if (amountUg == 0) revert ZeroAmount();
+        if (amountUg > governance.maxAmountPerTx()) revert ExceedsMax();
     }
 
-    /// @dev Buy-specific: milligram bounds including admin `minimumBuyGoldValueInMg` (skipped when that value is 0).
-    function _checkBuyGoldAmount(uint256 weightMg) private view {
-        if (weightMg == 0) revert ZeroAmount();
-        if (weightMg > governance.maxGramsPerTx()) revert ExceedsMax();
-        uint256 minMg = governance.minimumBuyGoldValueInMg();
-        if (minMg > 0 && weightMg < minMg) revert BelowMinBuyGold();
+    /// @dev Buy-specific: microgram bounds including admin `minimumBuyGoldValueInUg` (skipped when that value is 0).
+    function _checkBuyGoldAmount(uint256 weightUg) private view {
+        if (weightUg == 0) revert ZeroAmount();
+        if (weightUg > governance.maxAmountPerTx()) revert ExceedsMax();
+        uint256 minUg = governance.minimumBuyGoldValueInUg();
+        if (minUg > 0 && weightUg < minUg) revert BelowMinBuyGold();
     }
 
-    function _checkBuyCap(uint256 grams) private view {
+    function _checkBuyCap(uint256 amountUg) private view {
         uint256 day = block.timestamp / 1 days;
-        uint256 used = _buyDay == day ? _buyDayGrams : 0;
-        if (used + grams > governance.dailyBuyCap()) revert CapBuy();
+        uint256 used = _buyDay == day ? _buyDayAmountUg : 0;
+        if (used + amountUg > governance.dailyBuyCap()) revert CapBuy();
     }
 
     function _checkNonKycFiatCap(address user, uint256 fiatValue_) private view {
         if (_nonKycFiatPurchased[user] + fiatValue_ > governance.nonKycMaxBuyFiatAmount()) revert CapBuyNonKyc();
     }
 
-    function _checkSellCap(uint256 grams) private view {
+    function _checkSellCap(uint256 amountUg) private view {
         uint256 day = block.timestamp / 1 days;
-        uint256 used = _sellDay == day ? _sellDayGrams : 0;
-        if (used + grams > governance.dailySellCap()) revert CapSell();
+        uint256 used = _sellDay == day ? _sellDayAmountUg : 0;
+        if (used + amountUg > governance.dailySellCap()) revert CapSell();
     }
 
-    function _accrueBuy(uint256 grams) private {
+    function _accrueBuy(uint256 amountUg) private {
         uint256 day = block.timestamp / 1 days;
         if (_buyDay != day) {
             _buyDay = day;
-            _buyDayGrams = 0;
+            _buyDayAmountUg = 0;
         }
-        _buyDayGrams += grams;
+        _buyDayAmountUg += amountUg;
     }
 
-    function _accrueSell(uint256 grams) private {
+    function _accrueSell(uint256 amountUg) private {
         uint256 day = block.timestamp / 1 days;
         if (_sellDay != day) {
             _sellDay = day;
-            _sellDayGrams = 0;
+            _sellDayAmountUg = 0;
         }
-        _sellDayGrams += grams;
+        _sellDayAmountUg += amountUg;
     }
 
     function _requirePending(TradeRequest storage r) private view {

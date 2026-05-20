@@ -20,7 +20,7 @@ contract MintFlow is Script {
         uint256 vpPk = vm.envOr("VP_PRIVATE_KEY", adminPk);
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
-        uint256 grams = vm.envOr("MINT_GRAMS", uint256(1000));
+        uint256 amountUg = vm.envOr("MINT_AMOUNT_UG", uint256(1_000_000)); // default 1 g
         address creditTo = vm.envAddress("MINT_CREDIT_TO");
         bytes32 vaultReceiptId = vm.envOr("MINT_VAULT_RECEIPT_ID", _DEFAULT_VAULT_RECEIPT_ID);
 
@@ -32,11 +32,11 @@ contract MintFlow is Script {
             apId: vm.envOr("MINT_AP_ID", vm.addr(apPk)),
             vpId: vm.envOr("MINT_VP_ID", vm.addr(vpPk)),
             lockUntilTs: vm.envOr("MINT_LOCK_UNTIL_TS", uint256(0)),
-            grams: grams
+            amountUg: amountUg
         });
 
         vm.startBroadcast(apPk);
-        uint256 requestId = trade.proposeMint(grams, creditTo, vaultReceiptId, lot);
+        uint256 requestId = trade.proposeMint(amountUg, creditTo, vaultReceiptId, lot);
         vm.stopBroadcast();
 
         vm.startBroadcast(vpPk);
