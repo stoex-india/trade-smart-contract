@@ -4,10 +4,10 @@ pragma solidity ^0.8.24;
 /// @title STOEX Gold — GoldNFT
 /// @notice **Soulbound** ERC-721 certificate: at most one token per **beneficiary** (economic owner). ERC-721 `ownerOf` is **custody** (may differ after nominee transfer).
 /// @dev UUPS upgradeable. Supply accounting:
-/// - `totalGoldSupply`: canonical **milligrams** on-chain; increases only on mint (`increaseSupply`), decreases on redeem/burn (`decreaseSupply`).
-/// - `totalAssetProviderBalance`: milligrams in AP buy pool; increases on sell returns and admin seeding; decreases on buy (`transferFromAPToUser`); mint adds holding without consuming pool; burn debits vault holding.
-/// - `circulatingSupply()` = `totalGoldSupply - totalAssetProviderBalance` (mg with users vs pool).
-/// - `userHolding` tracks milligrams per beneficiary.
+/// - `totalGoldSupply`: canonical **micrograms (µg)** on-chain; increases only on mint (`increaseSupply`), decreases on redeem/burn (`decreaseSupply`).
+/// - `totalAssetProviderBalance`: micrograms in AP buy pool; increases on sell returns and admin seeding; decreases on buy (`transferFromAPToUser`); mint adds holding without consuming pool; burn debits vault holding.
+/// - `circulatingSupply()` = `totalGoldSupply - totalAssetProviderBalance` (µg with users vs pool).
+/// - `userHolding` tracks micrograms per beneficiary.
 /// - `increaseSupply` / `transferFromAPToUser` / `decreaseSupply` are restricted to `TRADE_MANAGER_ROLE`.
 /// - `mintCertificate` is `AP_ROLE`; `mintCertificateForTrade` is `TRADE_MANAGER_ROLE` for automated first purchase/mint execution.
 /// - Transfers are blocked in `_update` except mint/burn/admin nominee flow (`_nomineeTransferActive`).
@@ -57,8 +57,8 @@ contract GoldNFT is
     string private _baseTokenUri;
 
     event CertificateMinted(address indexed user, uint256 tokenId);
-    event SupplyIncreased(uint256 grams, address indexed user, uint256 lotId);
-    event SupplyDecreased(uint256 grams, address indexed user, StoexTypes.TxType txType);
+    event SupplyIncreased(uint256 amountUg, address indexed user, uint256 lotId);
+    event SupplyDecreased(uint256 amountUg, address indexed user, StoexTypes.TxType txType);
     event MetadataUpdated(uint256 tokenId, string uri);
     event NomineeTransferred(address indexed fromBeneficiary, address indexed toCustody, uint256 tokenId);
     event WhitelistRegistryUpdated(address registry);
@@ -130,7 +130,7 @@ contract GoldNFT is
 
     function increaseSupply(
         address user,
-        uint256 grams,
+        uint256 amountUg,
         StoexTypes.MintLotMeta calldata lot,
         uint256 requestId,
         StoexTypes.TxType historyKind
@@ -144,30 +144,30 @@ contract GoldNFT is
     {
         if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
         if (tokenIdByBeneficiary[user] == 0) revert NoCertificate();
-        if (grams == 0) revert ZeroAmount();
+        if (amountUg == 0) revert ZeroAmount();
 
         lotId = ++_nextLotId;
         StoexTypes.MintLotMeta memory m = lot;
-        m.grams = grams;
+        m.amountUg = amountUg;
         _mintLots[lotId] = m;
         _userLotIds[user].push(lotId);
 
-        userHolding[user] += grams;
-        totalGoldSupply += grams;
+        userHolding[user] += amountUg;
+        totalGoldSupply += amountUg;
 
         _txHistory[user].push(
             StoexTypes.TxRecord({
                 txType: historyKind,
-                grams: grams,
+                amountUg: amountUg,
                 timestamp: block.timestamp,
                 requestId: requestId
             })
         );
 
-        emit SupplyIncreased(grams, user, lotId);
+        emit SupplyIncreased(amountUg, user, lotId);
     }
 
-    function decreaseSupply(address user, uint256 grams, StoexTypes.TxType txType, uint256 requestId)
+    function decreaseSupply(address user, uint256 amountUg, StoexTypes.TxType txType, uint256 requestId)
         external
         override
         onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
@@ -175,27 +175,27 @@ contract GoldNFT is
         nonReentrant
     {
         if (!whitelistRegistry.isEligible(user)) revert NotEligible();
-        if (grams == 0) revert ZeroAmount();
-        if (userHolding[user] < grams) revert InsufficientBalance();
+        if (amountUg == 0) revert ZeroAmount();
+        if (userHolding[user] < amountUg) revert InsufficientBalance();
 
-        userHolding[user] -= grams;
+        userHolding[user] -= amountUg;
         if (txType == StoexTypes.TxType.Sell) {
-            totalAssetProviderBalance += grams;
+            totalAssetProviderBalance += amountUg;
         } else {
-            totalGoldSupply -= grams;
+            totalGoldSupply -= amountUg;
         }
 
         _txHistory[user].push(
-            StoexTypes.TxRecord({txType: txType, grams: grams, timestamp: block.timestamp, requestId: requestId})
+            StoexTypes.TxRecord({txType: txType, amountUg: amountUg, timestamp: block.timestamp, requestId: requestId})
         );
 
-        emit SupplyDecreased(grams, user, txType);
+        emit SupplyDecreased(amountUg, user, txType);
     }
 
     /// @inheritdoc IGoldNFT
     function transferFromAPToUser(
         address user,
-        uint256 grams,
+        uint256 amountUg,
         StoexTypes.MintLotMeta calldata lot,
         uint256 requestId,
         StoexTypes.TxType historyKind
@@ -209,29 +209,29 @@ contract GoldNFT is
     {
         if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
         if (tokenIdByBeneficiary[user] == 0) revert NoCertificate();
-        if (grams == 0) revert ZeroAmount();
-        if (totalAssetProviderBalance < grams) revert InsufficientPoolInventory();
+        if (amountUg == 0) revert ZeroAmount();
+        if (totalAssetProviderBalance < amountUg) revert InsufficientPoolInventory();
 
-        totalAssetProviderBalance -= grams;
+        totalAssetProviderBalance -= amountUg;
 
         lotId = ++_nextLotId;
         StoexTypes.MintLotMeta memory m = lot;
-        m.grams = grams;
+        m.amountUg = amountUg;
         _mintLots[lotId] = m;
         _userLotIds[user].push(lotId);
 
-        userHolding[user] += grams;
+        userHolding[user] += amountUg;
 
         _txHistory[user].push(
             StoexTypes.TxRecord({
                 txType: historyKind,
-                grams: grams,
+                amountUg: amountUg,
                 timestamp: block.timestamp,
                 requestId: requestId
             })
         );
 
-        emit SupplyIncreased(grams, user, lotId);
+        emit SupplyIncreased(amountUg, user, lotId);
     }
 
     function updateMetadata(uint256 tokenId, string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -341,16 +341,16 @@ contract GoldNFT is
     }
 
     /// @notice Bootstrap gold inventory into the AP buy pool (e.g. test harness or off-chain backed vault intake).
-    function seedPoolInventory(uint256 grams) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
-        if (grams == 0) revert ZeroAmount();
-        totalGoldSupply += grams;
-        totalAssetProviderBalance += grams;
-        emit PoolInventorySeeded(grams);
+    function seedPoolInventory(uint256 amountUg) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
+        if (amountUg == 0) revert ZeroAmount();
+        totalGoldSupply += amountUg;
+        totalAssetProviderBalance += amountUg;
+        emit PoolInventorySeeded(amountUg);
     }
 
     uint256 public totalAssetProviderBalance;
 
-    event PoolInventorySeeded(uint256 grams);
+    event PoolInventorySeeded(uint256 amountUg);
 
     uint256[43] private __gap;
 

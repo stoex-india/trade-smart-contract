@@ -6,7 +6,7 @@ import {StoexTypes} from "../libraries/StoexTypes.sol";
 /// @title IEscrowVault
 /// @notice Escrow hooks for `TradeManager` (implementation is `EscrowVault`).
 interface IEscrowVault {
-    function lockTokens(address wallet, uint256 grams, StoexTypes.EscrowReason reason, uint256 requestId) external;
+    function lockTokens(address wallet, uint256 amountUg, StoexTypes.EscrowReason reason, uint256 requestId) external;
 
     function unlockTokens(uint256 requestId) external;
 
@@ -21,7 +21,7 @@ interface IEscrowVault {
         view
         returns (
             address user,
-            uint256 grams,
+            uint256 amountUg,
             StoexTypes.EscrowReason reasonType,
             uint256 lockedAt,
             bool released

@@ -92,7 +92,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -235,7 +235,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -471,7 +471,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -603,7 +603,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -634,7 +634,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

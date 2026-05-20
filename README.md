@@ -54,13 +54,15 @@ forge test -vv
 
 ### Gold supply accounting (`GoldNFT`)
 
-All gold integers are **milligrams (mg)** unless noted otherwise.
+All gold integers are **micrograms (µg)** unless noted otherwise. **`1 gram = 1_000_000 µg`**. Off-chain UI may display grams using `GovernanceConfig.goldPrecision()` (default **6**).
 
-- **`totalGoldSupply`**: mg tracked on-chain; increases only when **`increaseSupply`** runs (mint path), decreases on redeem/burn (**`decreaseSupply`** with `Redeem` / `Burn`).
-- **`totalAssetProviderBalance`**: mg in the **Asset Provider buy pool**. Buys call **`transferFromAPToUser`** (same tx as **`createBuyRequest`**); users do not mint new mg on buy. Sells return mg to the pool (`Sell`). **`seedPoolInventory`** (admin) increases both **`totalGoldSupply`** and **`totalAssetProviderBalance`** when onboarding vaulted inventory into the pool.
+- **`totalGoldSupply`**: µg tracked on-chain; increases only when **`increaseSupply`** runs (mint path), decreases on redeem/burn (**`decreaseSupply`** with `Redeem` / `Burn`).
+- **`totalAssetProviderBalance`**: µg in the **Asset Provider buy pool**. Buys call **`transferFromAPToUser`** (same tx as **`createBuyRequest`**); users do not mint new supply on buy. Sells return µg to the pool (`Sell`). **`seedPoolInventory`** (admin) increases both **`totalGoldSupply`** and **`totalAssetProviderBalance`** when onboarding vaulted inventory into the pool.
 - **`circulatingSupply()`** = **`totalGoldSupply - totalAssetProviderBalance`**.
 
-**Buy** validates pool depth, eligibility, `minimumBuyGoldValueInMg`, per-tx / daily caps, and non-KYC fiat cap; then **credits the user in the same transaction** (no `executeRequest`).
+**Buy** validates pool depth, eligibility, `minimumBuyGoldValueInUg`, per-tx / daily caps, and non-KYC fiat cap; then **credits the user in the same transaction** (no `executeRequest`).
+
+**Redeploy note:** this repo does not ship on-chain data migration. Deploy fresh proxies and re-seed pool inventory after unit changes.
 
 ### 1) Install Foundry and clone
 
@@ -105,6 +107,7 @@ forge script script/DeployAmoy.s.sol:DeployAmoy \
   --rpc-url $AMOY_RPC_URL \
   --broadcast \
   --slow \
+  --verify \
   --gas-estimate-multiplier 130 \
   --priority-gas-price 35gwei
 ```
@@ -270,7 +273,7 @@ cast call $WHITELIST_REGISTRY "isEligibleForNonKycUser(address)(bool)" $INVESTOR
 # Policy flags
 cast call $GOVERNANCE_CONFIG "nonKycMaxBuyFiatAmount()(uint256)" --rpc-url $AMOY_RPC_URL
 cast call $GOVERNANCE_CONFIG "vpRequiredForApprovals()(bool)" --rpc-url $AMOY_RPC_URL
-cast call $GOVERNANCE_CONFIG "minimumBuyGoldValueInMg()(uint256)" --rpc-url $AMOY_RPC_URL
+cast call $GOVERNANCE_CONFIG "minimumBuyGoldValueInUg()(uint256)" --rpc-url $AMOY_RPC_URL
 
 # USER_ROLE on both contracts
 cast call $WHITELIST_REGISTRY "hasRole(bytes32,address)(bool)" $USER_ROLE $INVESTOR_1 --rpc-url $AMOY_RPC_URL
@@ -287,7 +290,7 @@ Step 7 scripts remain deterministic direct role-by-role runners. For user gasles
 
 | Flow | Who starts | Approval order (default) | Execution |
 |------|------------|--------------------------|-----------|
-| **Buy** | Investor (`createBuyRequest(weightMg, fiat_value, payment_ref, txDetailsHash)`) | *none* | *Immediate* — request stored as **Executed**; `GoldNFT.transferFromAPToUser` in same call |
+| **Buy** | Investor (`createBuyRequest(weightUg, fiat_value, payment_ref, txDetailsHash)`) | *none* | *Immediate* — request stored as **Executed**; `GoldNFT.transferFromAPToUser` in same call |
 | **Sell** | Investor (`createSellRequest`, escrow locks) | AP → AT | Admin execute |
 | **Redeem** | Investor (`createRedeemRequest`) | AP → VP → PAP → AT (VP step omitted if `vpRequiredForApprovals` is false) | Admin execute |
 | **Mint** | AP (`proposeMint`) | VP → AT (VP omitted if disabled) | Admin execute |
@@ -303,7 +306,7 @@ VP_REQUIRED=false forge script script/GovernanceAdminFlags.s.sol:GovernanceAdmin
 
 **Buy** does not use `getApprovalPolicy` (no AP/AT, no admin execute). **Sell** default policy is unchanged (AP → AT, no VP step). Co-signatures and `approveRequest` apply to **non-Buy** request types with a non-empty policy.
 
-**`GovernanceConfig`**: `minimumBuyGoldValueInMg` (admin, **`setMinimumBuyGoldValueInMg`**) enforces a floor on buy size; set to **0** to disable the floor. **Amount caps** (`dailyBuyCap`, `maxGramsPerTx`, `minRedeemQuantity`, etc.) are expressed in **mg** (`goldPrecision` default is **0** for whole milligram integers).
+**`GovernanceConfig`**: `minimumBuyGoldValueInUg` (admin, **`setMinimumBuyGoldValueInUg`**) enforces a floor on buy size; set to **0** to disable the floor. **Amount caps** (`dailyBuyCap`, `maxAmountPerTx`, `minRedeemAmountUg`, etc.) are expressed in **µg** (`goldPrecision` default is **6** for gram display).
 
 **EIP-712 co-sign**: integrators hash with `TradeManager.hashCoSignBatch(requestId, nonce, deadline)` using domain `StoexGoldTrade` / version `1`, then call `executeWithCoSignatures` (see tests in `StoexPRD.t.sol`).
 
@@ -323,7 +326,7 @@ You can keep one key for all roles in testing if the same wallet holds those rol
 
 Optional inputs:
 
-- `BUY_WEIGHT_MG` (or legacy `BUY_GRAMS`) — gold amount in **milligrams** (default `1000` mg)
+- `BUY_WEIGHT_UG` — gold amount in **micrograms** (default `1000000` = 1 g)
 - `BUY_FIAT_VALUE` (default `1`) — INR minor units for `fiat_value` (must be non-zero on-chain)
 - `BUY_PAYMENT_REF` (default `"BUY-REF-001"` as bytes32)
 - `BUY_TX_DETAILS_HASH` (optional `bytes32`) — bank/UPI audit hash
@@ -339,11 +342,11 @@ forge script script/BuyFlow.s.sol:BuyFlow --rpc-url $AMOY_RPC_URL --broadcast --
 
 #### Step 7.2 - Sell flow script (PRD order: USER -> AP -> AT -> EXECUTE)
 
-Precondition: investor already has enough grams in `GoldNFT.userHolding`.
+Precondition: investor already has enough µg in `GoldNFT.userHolding`.
 
 Optional inputs:
 
-- `SELL_GRAMS` (default `500`)
+- `SELL_AMOUNT_UG` (default `500000` = 0.5 g)
 - `SELL_PAYOUT_REF` (default `"SELL-REF-001"` as bytes32)
 
 Run:
@@ -355,11 +358,11 @@ forge script script/SellFlow.s.sol:SellFlow --rpc-url $AMOY_RPC_URL --broadcast 
 
 #### Step 7.3 - Redeem flow script (PRD order: USER -> AP -> VP -> PAP -> AT -> EXECUTE)
 
-Precondition: investor already has enough grams and is not timelocked for redeem.
+Precondition: investor already has enough µg and is not timelocked for redeem.
 
 Optional inputs:
 
-- `REDEEM_GRAMS` (default `1000`)
+- `REDEEM_AMOUNT_UG` (default `1000000` = 1 g)
 - `REDEEM_DELIVERY_REF` (default `"REDEEM-REF-001"` as bytes32)
 
 Run:
@@ -373,11 +376,11 @@ forge script script/RedeemFlow.s.sol:RedeemFlow --rpc-url $AMOY_RPC_URL --broadc
 
 Required inputs:
 
-- `MINT_CREDIT_TO` (onboarded/eligible investor wallet to receive grams)
+- `MINT_CREDIT_TO` (onboarded/eligible investor wallet to receive gold)
 
 Optional inputs:
 
-- `MINT_GRAMS` (default `1000`)
+- `MINT_AMOUNT_UG` (default `1000000` = 1 g)
 - `MINT_VAULT_RECEIPT_ID` (default `"VAULT-RCPT-001"` as bytes32)
 - `MINT_BATCH_ID` (default `"BATCH-001"` as bytes32)
 - `MINT_PURITY` (default `999`)
@@ -394,11 +397,11 @@ forge script script/MintFlow.s.sol:MintFlow --rpc-url $AMOY_RPC_URL --broadcast 
 
 #### Step 7.5 - Burn flow script (PRD order: AP -> VP -> AT -> EXECUTE)
 
-Precondition: `vaultBookkeeping` must be eligible and have enough grams, because burn debits that holder.
+Precondition: `vaultBookkeeping` must be eligible and have enough µg, because burn debits that holder.
 
 Optional inputs:
 
-- `BURN_GRAMS` (default `500`)
+- `BURN_AMOUNT_UG` (default `500000` = 0.5 g)
 - `BURN_REF_ID` (default `"BURN-REF-001"` as bytes32)
 - `BURN_REASON` (default `"Ops burn"`)
 
@@ -469,9 +472,9 @@ Use Tresori SDK:
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
   functionName: "createBuyRequest",
-  params: [weightMg, fiatValue, paymentRefBytes32, txDetailsHashBytes32],
+  params: [weightUg, fiatValue, paymentRefBytes32, txDetailsHashBytes32],
   abi: [
-    "function createBuyRequest(uint256 weightMg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
+    "function createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
   ],
   fromAddress: userMpcWallet,
   chain: selectedChain,
@@ -505,7 +508,7 @@ Read eligibility:
 cast call $WHITELIST_REGISTRY "isEligible(address)(bool)" $INVESTOR_WALLET --rpc-url $AMOY_RPC_URL
 ```
 
-Read holding (balance is **milligrams**):
+Read holding (balance is **micrograms**; divide by `1_000_000` for grams):
 
 ```shell
 cast call $GOLD_NFT "userHolding(address)(uint256)" $INVESTOR_WALLET --rpc-url $AMOY_RPC_URL

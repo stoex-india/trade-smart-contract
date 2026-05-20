@@ -14,19 +14,20 @@ interface IGovernanceConfig {
 
     function dailySellCap() external view returns (uint256);
 
-    function minRedeemQuantity() external view returns (uint256);
+    function minRedeemAmountUg() external view returns (uint256);
 
-    function maxGramsPerTx() external view returns (uint256);
+    function maxAmountPerTx() external view returns (uint256);
 
     function defaultTimelockDuration() external view returns (uint256);
 
+    /// @notice Display precision for grams when converting off-chain (6 = microgram base unit per gram).
     function goldPrecision() external view returns (uint8);
 
     /// @notice Max cumulative INR notional (minor units, e.g. paise) for non-KYC buy path; enforced against buy `fiat_value`.
     function nonKycMaxBuyFiatAmount() external view returns (uint256);
 
-    /// @notice Minimum buy quantity in milligrams (set 0 to disable the minimum floor for buys).
-    function minimumBuyGoldValueInMg() external view returns (uint256);
+    /// @notice Minimum buy quantity in micrograms (µg). Set 0 to disable the floor.
+    function minimumBuyGoldValueInUg() external view returns (uint256);
 
     function vpRequiredForApprovals() external view returns (bool);
 }

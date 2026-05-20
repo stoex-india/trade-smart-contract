@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — EscrowVault
-/// @notice **Logical escrow** over gold grams (not an ERC-20): tracks per-request locks so users cannot double-spend the same grams while sell/redeem requests are pending.
+/// @notice **Logical escrow** over gold micrograms (not an ERC-20): tracks per-request locks so users cannot double-spend the same amount while sell/redeem requests are pending.
 /// @dev Only the `TradeManager` proxy address may `lockTokens` / `unlockTokens` / `releaseEscrow` (set once via `setTradeManager`).
 /// Invariant: sum of active locks per wallet ≤ `GoldNFT.userHolding(wallet)`. `getAvailableBalance` = holding minus locked.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -20,7 +20,7 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
 
     struct EscrowLock {
         address user;
-        uint256 grams;
+        uint256 amountUg;
         StoexTypes.EscrowReason reasonType;
         uint256 lockedAt;
         bool released;
@@ -29,9 +29,9 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     mapping(uint256 => EscrowLock) private _locks;
     mapping(address => uint256) private _lockedTotal;
 
-    event TokensLocked(uint256 indexed requestId, address indexed user, uint256 grams, StoexTypes.EscrowReason reason);
-    event TokensUnlocked(uint256 indexed requestId, address indexed user, uint256 grams);
-    event EscrowReleased(uint256 indexed requestId, address indexed user, uint256 grams, address destination);
+    event TokensLocked(uint256 indexed requestId, address indexed user, uint256 amountUg, StoexTypes.EscrowReason reason);
+    event TokensUnlocked(uint256 indexed requestId, address indexed user, uint256 amountUg);
+    event EscrowReleased(uint256 indexed requestId, address indexed user, uint256 amountUg, address destination);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -63,24 +63,24 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (msg.sender != tradeManager) revert NotTradeManager();
     }
 
-    function lockTokens(address wallet, uint256 grams, StoexTypes.EscrowReason reason, uint256 requestId)
+    function lockTokens(address wallet, uint256 amountUg, StoexTypes.EscrowReason reason, uint256 requestId)
         external
         onlyTradeManager
     {
         if (_locks[requestId].user != address(0)) revert LockExists();
         uint256 available = getAvailableBalance(wallet);
-        if (grams > available) revert ExceedsAvailable();
+        if (amountUg > available) revert ExceedsAvailable();
 
         _locks[requestId] = EscrowLock({
             user: wallet,
-            grams: grams,
+            amountUg: amountUg,
             reasonType: reason,
             lockedAt: block.timestamp,
             released: false
         });
-        _lockedTotal[wallet] += grams;
+        _lockedTotal[wallet] += amountUg;
 
-        emit TokensLocked(requestId, wallet, grams, reason);
+        emit TokensLocked(requestId, wallet, amountUg, reason);
     }
 
     function unlockTokens(uint256 requestId) external onlyTradeManager {
@@ -89,9 +89,9 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (L.released) revert AlreadyReleased();
 
         L.released = true;
-        _lockedTotal[L.user] -= L.grams;
+        _lockedTotal[L.user] -= L.amountUg;
 
-        emit TokensUnlocked(requestId, L.user, L.grams);
+        emit TokensUnlocked(requestId, L.user, L.amountUg);
     }
 
     function releaseEscrow(uint256 requestId, address destination) external onlyTradeManager {
@@ -101,9 +101,9 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (destination == address(0)) revert ZeroAddress();
 
         L.released = true;
-        _lockedTotal[L.user] -= L.grams;
+        _lockedTotal[L.user] -= L.amountUg;
 
-        emit EscrowReleased(requestId, L.user, L.grams, destination);
+        emit EscrowReleased(requestId, L.user, L.amountUg, destination);
     }
 
     function getLockedAmount(address wallet) external view returns (uint256) {
@@ -119,10 +119,10 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     function getEscrowDetails(uint256 requestId)
         external
         view
-        returns (address user, uint256 grams, StoexTypes.EscrowReason reasonType, uint256 lockedAt, bool released)
+        returns (address user, uint256 amountUg, StoexTypes.EscrowReason reasonType, uint256 lockedAt, bool released)
     {
         EscrowLock storage L = _locks[requestId];
-        return (L.user, L.grams, L.reasonType, L.lockedAt, L.released);
+        return (L.user, L.amountUg, L.reasonType, L.lockedAt, L.released);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}

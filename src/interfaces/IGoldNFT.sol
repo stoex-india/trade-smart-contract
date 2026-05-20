@@ -20,18 +20,18 @@ interface IGoldNFT {
 
     function increaseSupply(
         address user,
-        uint256 grams,
+        uint256 amountUg,
         StoexTypes.MintLotMeta calldata lot,
         uint256 requestId,
         StoexTypes.TxType historyKind
     ) external returns (uint256 lotId);
 
-    function decreaseSupply(address user, uint256 grams, StoexTypes.TxType txType, uint256 requestId) external;
+    function decreaseSupply(address user, uint256 amountUg, StoexTypes.TxType txType, uint256 requestId) external;
 
-    /// @notice Moves milligrams from AP pool to a user (buy path). Does not increase `totalGoldSupply`.
+    /// @notice Moves micrograms from AP pool to a user (buy path). Does not increase `totalGoldSupply`.
     function transferFromAPToUser(
         address user,
-        uint256 grams,
+        uint256 amountUg,
         StoexTypes.MintLotMeta calldata lot,
         uint256 requestId,
         StoexTypes.TxType historyKind

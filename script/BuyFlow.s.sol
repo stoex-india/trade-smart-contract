@@ -16,13 +16,13 @@ contract BuyFlow is Script {
 
         uint256 userPk = vm.envUint("USER_PRIVATE_KEY");
 
-        uint256 weightMg = vm.envOr("BUY_WEIGHT_MG", vm.envOr("BUY_GRAMS", uint256(1000)));
+        uint256 weightUg = vm.envOr("BUY_WEIGHT_UG", uint256(1_000_000)); // default 1 g
         bytes32 paymentRef = vm.envOr("BUY_PAYMENT_REF", _DEFAULT_PAYMENT_REF);
         uint256 fiatValue = vm.envOr("BUY_FIAT_VALUE", uint256(1));
         bytes32 txDetailsHash = vm.envOr("BUY_TX_DETAILS_HASH", bytes32(0));
 
         vm.startBroadcast(userPk);
-        uint256 requestId = trade.createBuyRequest(weightMg, fiatValue, paymentRef, txDetailsHash);
+        uint256 requestId = trade.createBuyRequest(weightUg, fiatValue, paymentRef, txDetailsHash);
         vm.stopBroadcast();
 
         console2.log("Buy request completed:", requestId);

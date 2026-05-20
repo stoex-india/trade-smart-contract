@@ -122,7 +122,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -224,7 +224,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -284,7 +284,7 @@
             "internalType": "enum StoexTypes.TxType"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -393,7 +393,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -438,7 +438,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -744,7 +744,7 @@
     "name": "seedPoolInventory",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -964,7 +964,7 @@
         "internalType": "address"
       },
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1009,7 +1009,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "grams",
+            "name": "amountUg",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -1344,7 +1344,7 @@
     "name": "PoolInventorySeeded",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1432,7 +1432,7 @@
     "name": "SupplyDecreased",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1457,7 +1457,7 @@
     "name": "SupplyIncreased",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — GovernanceConfig
-/// @notice Single source of truth for **approval sequencing**, **volume limits**, **request TTL**, and **precision** (Technical PRD v2.0).
+/// @notice Single source of truth for **approval sequencing**, **volume limits**, **request TTL**, and **display precision** (Technical PRD v2.0).
 /// @dev UUPS upgradeable. Role model:
 /// - `DEFAULT_ADMIN_ROLE`: upgrade authority (`_authorizeUpgrade`) and role administration.
 /// - `AT_ROLE` (`StoexRoles.AT_ROLE`): Asset Trustee — may change any policy parameter and approval matrices.
-/// @notice Gold **amounts** (caps, holdings, lot sizes) are **integer milligrams** (mg). `goldPrecision` is retained for legacy readers; new logic uses raw mg.
+/// @notice Gold **amounts** (caps, holdings, lot sizes) are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`. `goldPrecision` is the off-chain decimal places when displaying grams (default 6).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -22,8 +22,8 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     uint256 public requestExpiryDuration;
     uint256 public dailyBuyCap;
     uint256 public dailySellCap;
-    uint256 public minRedeemQuantity;
-    uint256 public maxGramsPerTx;
+    uint256 public minRedeemAmountUg;
+    uint256 public maxAmountPerTx;
     uint256 public defaultTimelockDuration;
     uint8 public goldPrecision;
 
@@ -33,13 +33,13 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     /// @notice Max cumulative INR notional (minor units, e.g. paise 1/100 INR) for non-KYC buy path (`WhitelistRegistry.isEligibleForNonKycUser`).
     uint256 public nonKycMaxBuyFiatAmount;
 
-    /// @notice Minimum buy size in **milligrams**; admin may set to 0 to disable the floor (not recommended). Enforced on every `createBuyRequest`.
-    uint256 public minimumBuyGoldValueInMg;
+    /// @notice Minimum buy size in **micrograms**; admin may set to 0 to disable the floor (not recommended). Enforced on every `createBuyRequest`.
+    uint256 public minimumBuyGoldValueInUg;
 
     event PolicyUpdated(string parameter, bytes32 key);
     event VpRequirementChanged(bool required);
     event NonKycMaxBuyFiatAmountChanged(uint256 amount);
-    event MinimumBuyGoldValueInMgChanged(uint256 valueMg);
+    event MinimumBuyGoldValueInUgChanged(uint256 valueUg);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -58,16 +58,16 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         vpRequiredForApprovals = true;
 
         requestExpiryDuration = 7 days;
-        // Amounts in milligrams (e.g. 10_000 g ≈ 10_000_000 mg daily buy cap)
-        uint256 mgPerKg = 1_000_000;
-        dailyBuyCap = 10 * mgPerKg;
-        dailySellCap = 5 * mgPerKg;
+        // Amounts in micrograms (1 kg = 1_000_000_000 µg)
+        uint256 ugPerKg = 1_000_000_000;
+        dailyBuyCap = 10 * ugPerKg;
+        dailySellCap = 5 * ugPerKg;
         nonKycMaxBuyFiatAmount = 50_000_000;
-        minRedeemQuantity = 10_000;
-        maxGramsPerTx = 1 * mgPerKg;
+        minRedeemAmountUg = 10_000_000; // 10 g
+        maxAmountPerTx = 1 * ugPerKg; // 1 kg
         defaultTimelockDuration = 0;
-        goldPrecision = 0;
-        minimumBuyGoldValueInMg = 1;
+        goldPrecision = 6;
+        minimumBuyGoldValueInUg = 1_000; // 1 mg
 
         _setDefaultPolicies();
     }
@@ -83,9 +83,9 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         emit NonKycMaxBuyFiatAmountChanged(amount);
     }
 
-    function setMinimumBuyGoldValueInMg(uint256 valueMg) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        minimumBuyGoldValueInMg = valueMg;
-        emit MinimumBuyGoldValueInMgChanged(valueMg);
+    function setMinimumBuyGoldValueInUg(uint256 valueUg) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        minimumBuyGoldValueInUg = valueUg;
+        emit MinimumBuyGoldValueInUgChanged(valueUg);
     }
 
     function _setDefaultPolicies() private {
@@ -126,9 +126,9 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         emit PolicyUpdated("dailyCap", bytes32(uint256(uint8(rt))));
     }
 
-    function setMinRedeemQuantity(uint256 grams) external onlyRole(StoexRoles.AT_ROLE) {
-        minRedeemQuantity = grams;
-        emit PolicyUpdated("minRedeemQuantity", bytes32(0));
+    function setMinRedeemAmountUg(uint256 amountUg) external onlyRole(StoexRoles.AT_ROLE) {
+        minRedeemAmountUg = amountUg;
+        emit PolicyUpdated("minRedeemAmountUg", bytes32(0));
     }
 
     function setRequestExpiry(uint256 seconds_) external onlyRole(StoexRoles.AT_ROLE) {
@@ -136,9 +136,9 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         emit PolicyUpdated("requestExpiryDuration", bytes32(0));
     }
 
-    function setMaxGramsPerTx(uint256 grams) external onlyRole(StoexRoles.AT_ROLE) {
-        maxGramsPerTx = grams;
-        emit PolicyUpdated("maxGramsPerTx", bytes32(0));
+    function setMaxAmountPerTx(uint256 amountUg) external onlyRole(StoexRoles.AT_ROLE) {
+        maxAmountPerTx = amountUg;
+        emit PolicyUpdated("maxAmountPerTx", bytes32(0));
     }
 
     function setDefaultTimelockDuration(uint256 seconds_) external onlyRole(StoexRoles.AT_ROLE) {

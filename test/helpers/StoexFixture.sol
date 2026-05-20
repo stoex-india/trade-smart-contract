@@ -135,7 +135,7 @@ abstract contract StoexFixture is Test {
         _registerVerifiedUser(user);
         _registerVerifiedUser(vaultBk);
 
-        gold.seedPoolInventory(100_000_000);
+        gold.seedPoolInventory(100_000_000_000); // 100 kg in µg
     }
 
     function _registerVerifiedUser(address u) internal {
@@ -151,14 +151,14 @@ abstract contract StoexFixture is Test {
         trade.grantRole(StoexRoles.USER_ROLE, u);
     }
 
-    /// @dev Buy completes atomically in `createBuyRequest` (milligram amounts). `fiat_value` is test-scaled with mg.
-    function _executeBuy(address investor, uint256 goldMg) internal returns (uint256 requestId) {
+    /// @dev Buy completes atomically in `createBuyRequest` (microgram amounts). `fiat_value` is test-scaled with amountUg.
+    function _executeBuy(address investor, uint256 amountUg) internal returns (uint256 requestId) {
         vm.prank(investor);
-        requestId = trade.createBuyRequest(goldMg, _defaultFiat(goldMg), bytes32(uint256(1)), bytes32(uint256(2)));
+        requestId = trade.createBuyRequest(amountUg, _defaultFiat(amountUg), bytes32(uint256(1)), bytes32(uint256(2)));
     }
 
-    function _defaultFiat(uint256 grams) internal pure returns (uint256) {
-        return grams * 100;
+    function _defaultFiat(uint256 amountUg) internal pure returns (uint256) {
+        return amountUg * 100;
     }
 
     function _packSig(uint256 pk, bytes32 digest) internal pure returns (bytes memory) {

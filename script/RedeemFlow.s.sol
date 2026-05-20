@@ -21,11 +21,11 @@ contract RedeemFlow is Script {
         uint256 papPk = vm.envOr("PAP_PRIVATE_KEY", adminPk);
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
-        uint256 grams = vm.envOr("REDEEM_GRAMS", uint256(1000));
+        uint256 amountUg = vm.envOr("REDEEM_AMOUNT_UG", uint256(1_000_000));
         bytes32 deliveryRef = vm.envOr("REDEEM_DELIVERY_REF", _DEFAULT_DELIVERY_REF);
 
         vm.startBroadcast(userPk);
-        uint256 requestId = trade.createRedeemRequest(grams, deliveryRef);
+        uint256 requestId = trade.createRedeemRequest(amountUg, deliveryRef);
         vm.stopBroadcast();
 
         vm.startBroadcast(apPk);

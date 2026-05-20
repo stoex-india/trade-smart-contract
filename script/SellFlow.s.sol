@@ -19,11 +19,11 @@ contract SellFlow is Script {
         uint256 apPk = vm.envOr("AP_PRIVATE_KEY", adminPk);
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
-        uint256 grams = vm.envOr("SELL_GRAMS", uint256(500));
+        uint256 amountUg = vm.envOr("SELL_AMOUNT_UG", uint256(500_000)); // default 0.5 g
         bytes32 payoutRef = vm.envOr("SELL_PAYOUT_REF", _DEFAULT_PAYOUT_REF);
 
         vm.startBroadcast(userPk);
-        uint256 requestId = trade.createSellRequest(grams, payoutRef);
+        uint256 requestId = trade.createSellRequest(amountUg, payoutRef);
         vm.stopBroadcast();
 
         vm.startBroadcast(apPk);

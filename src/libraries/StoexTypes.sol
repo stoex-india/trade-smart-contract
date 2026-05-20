@@ -73,7 +73,7 @@ library StoexTypes {
         address apId;
         address vpId;
         uint256 lockUntilTs;
-        uint256 grams;
+        uint256 amountUg;
     }
 
     struct UserProfile {
@@ -89,7 +89,7 @@ library StoexTypes {
 
     struct TxRecord {
         TxType txType;
-        uint256 grams;
+        uint256 amountUg;
         uint256 timestamp;
         uint256 requestId;
     }

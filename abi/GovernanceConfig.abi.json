@@ -203,7 +203,7 @@
   },
   {
     "type": "function",
-    "name": "maxGramsPerTx",
+    "name": "maxAmountPerTx",
     "inputs": [],
     "outputs": [
       {
@@ -216,7 +216,7 @@
   },
   {
     "type": "function",
-    "name": "minRedeemQuantity",
+    "name": "minRedeemAmountUg",
     "inputs": [],
     "outputs": [
       {
@@ -229,7 +229,7 @@
   },
   {
     "type": "function",
-    "name": "minimumBuyGoldValueInMg",
+    "name": "minimumBuyGoldValueInUg",
     "inputs": [],
     "outputs": [
       {
@@ -392,10 +392,10 @@
   },
   {
     "type": "function",
-    "name": "setMaxGramsPerTx",
+    "name": "setMaxAmountPerTx",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -405,10 +405,10 @@
   },
   {
     "type": "function",
-    "name": "setMinRedeemQuantity",
+    "name": "setMinRedeemAmountUg",
     "inputs": [
       {
-        "name": "grams",
+        "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -418,10 +418,10 @@
   },
   {
     "type": "function",
-    "name": "setMinimumBuyGoldValueInMg",
+    "name": "setMinimumBuyGoldValueInUg",
     "inputs": [
       {
-        "name": "valueMg",
+        "name": "valueUg",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -591,10 +591,10 @@
   },
   {
     "type": "event",
-    "name": "MinimumBuyGoldValueInMgChanged",
+    "name": "MinimumBuyGoldValueInUgChanged",
     "inputs": [
       {
-        "name": "valueMg",
+        "name": "valueUg",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
