@@ -45,6 +45,29 @@
   },
   {
     "type": "function",
+    "name": "adminRegisterUser",
+    "inputs": [
+      {
+        "name": "userId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "kycRef",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "approveWalletChange",
     "inputs": [
       {
@@ -211,6 +234,25 @@
   },
   {
     "type": "function",
+    "name": "hasUserRole",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -320,11 +362,6 @@
         "internalType": "bytes32"
       },
       {
-        "name": "wallet",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "kycRef",
         "type": "string",
         "internalType": "string"
@@ -406,6 +443,19 @@
     "inputs": [
       {
         "name": "admin",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTradeManager",
+    "inputs": [
+      {
+        "name": "tradeManager_",
         "type": "address",
         "internalType": "address"
       }
@@ -503,6 +553,19 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tradeManager",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ITradeManagerOnboarding"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1052,6 +1115,11 @@
   {
     "type": "error",
     "name": "NotWalletOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TradeManagerNotSet",
     "inputs": []
   },
   {

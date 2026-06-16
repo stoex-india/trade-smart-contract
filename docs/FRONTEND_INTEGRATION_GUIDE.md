@@ -15,6 +15,16 @@
 
 Same as above; never hard-code stale proxy addresses from an old deployment.
 
+**Current Amoy proxies** (see also [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md)):
+
+| Contract | Address |
+|----------|---------|
+| TradeManager | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` |
+| GoldNFT | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` |
+| GovernanceConfig | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` |
+| WhitelistRegistry | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` |
+| Tresori forwarder | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` |
+
 ## 2) Units and Encoding
 
 - Gold amounts are **integer micrograms (µg)** on-chain.
@@ -37,7 +47,8 @@ Use direct contract reads:
 - `GovernanceConfig.nonKycMaxBuyFiatAmount()`
 - `GoldNFT.userHolding(user)` — balance in µg
 - `GoldNFT.getUserLotIds(user)`
-- `TradeManager.getUserRequests(user, offset, limit)`
+- `GoldNFT.getPoolLotIds()` — AP inventory lots (mint path)
+- `GoldNFT.totalAssetProviderBalance()` — AP buy pool depth
 - `TradeManager.getRequest(requestId)` — struct field `amountUg`
 - `TradeManager.getRequestStatus(requestId)`
 
@@ -126,12 +137,21 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 });
 ```
 
+### User onboarding (gasless)
+
+See **[FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md)** for the full flow, Amoy addresses, and ops verification commands.
+
+`registerUser(bytes32 userId,string kycRef)` on **`WhitelistRegistry`** — wallet is the gasless `fromAddress` (no wallet argument).
+
 ### Mint (AP/operator, gasless proposal)
 
-`proposeMint(uint256 amountUg,address creditTo,bytes32 vaultReceiptId,(bytes32,bytes32,uint16,uint256,address,address,uint256,uint256))`
+Full step-by-step (approvals, execute, verification): **[FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md)**.
 
+`proposeMint(uint256 amountUg,bytes32 vaultReceiptId,(bytes32,bytes32,uint16,uint256,address,address,uint256,uint256))`
+
+- Mint execute credits the **AP buy pool**, not a user wallet.
 - Tuple field order: `vaultReceiptId`, `batchId`, `purity`, `depositTimestamp`, `apId`, `vpId`, `lockUntilTs`, **`amountUg`**.
-- Prefer **array** form for `params[3]` in the SDK, e.g. `[vaultReceiptId, batchId, purity, depositTs, apId, vpId, lockUntilTs, amountUg]`.
+- Prefer **array** form for `params[2]` in the SDK, e.g. `[vaultReceiptId, batchId, purity, depositTs, apId, vpId, lockUntilTs, amountUg]`.
 - `fromAddress` must hold `AP_ROLE` on `TradeManager`.
 
 ### Burn (AP/operator, gasless proposal)
@@ -158,6 +178,8 @@ Caller must be AP role wallet (`fromAddress`).
 Share with external integrators:
 
 - This guide.
+- [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md) — user onboarding flow.
+- [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) — mint / AP pool ops flow.
 - Contract addresses for the current deployment.
 - ABI JSON files.
 - Chain RPC + chain ID.

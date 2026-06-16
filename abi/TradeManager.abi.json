@@ -484,159 +484,6 @@
   },
   {
     "type": "function",
-    "name": "getUserRequests",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "offset",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ids",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "rows",
-        "type": "tuple[]",
-        "internalType": "struct TradeManager.TradeRequest[]",
-        "components": [
-          {
-            "name": "requestType",
-            "type": "uint8",
-            "internalType": "enum StoexTypes.RequestType"
-          },
-          {
-            "name": "status",
-            "type": "uint8",
-            "internalType": "enum StoexTypes.RequestStatus"
-          },
-          {
-            "name": "initiator",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "targetUser",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amountUg",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "paymentRefId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vaultReceiptId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "reason",
-            "type": "string",
-            "internalType": "string"
-          },
-          {
-            "name": "createdAt",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "expiresAt",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "approvalsDone",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "mintLot",
-            "type": "tuple",
-            "internalType": "struct StoexTypes.MintLotMeta",
-            "components": [
-              {
-                "name": "vaultReceiptId",
-                "type": "bytes32",
-                "internalType": "bytes32"
-              },
-              {
-                "name": "batchId",
-                "type": "bytes32",
-                "internalType": "bytes32"
-              },
-              {
-                "name": "purity",
-                "type": "uint16",
-                "internalType": "uint16"
-              },
-              {
-                "name": "depositTimestamp",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "apId",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "vpId",
-                "type": "address",
-                "internalType": "address"
-              },
-              {
-                "name": "lockUntilTs",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "amountUg",
-                "type": "uint256",
-                "internalType": "uint256"
-              }
-            ]
-          },
-          {
-            "name": "escrowLocked",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "fiatValue",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "txDetailsHash",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "goldNFT",
     "inputs": [],
     "outputs": [
@@ -681,6 +528,19 @@
   },
   {
     "type": "function",
+    "name": "grantUserRoleFromRegistry",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "hasRole",
     "inputs": [
       {
@@ -699,35 +559,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "hashCoSignBatch",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -864,11 +695,6 @@
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "creditTo",
-        "type": "address",
-        "internalType": "address"
       },
       {
         "name": "vaultReceiptId",
@@ -1751,6 +1577,11 @@
   {
     "type": "error",
     "name": "NotInitiator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotWhitelistRegistry",
     "inputs": []
   },
   {

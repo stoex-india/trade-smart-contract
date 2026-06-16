@@ -38,26 +38,36 @@ contract ConfigureRoles is Script {
         address forwarder = vm.envOr("RELAYER_SMART_CONTRACT", vm.envOr("ERC2771_FORWARDER", address(0)));
 
         if (forwarder != address(0)) {
-            trade.setTrustedForwarder(forwarder);
-            registry.setTrustedForwarder(forwarder);
-            gold.setTrustedForwarder(forwarder);
-            console2.log("Rotated trusted forwarder", forwarder);
+            if (trade.trustedForwarder() != forwarder) {
+                trade.setTrustedForwarder(forwarder);
+                console2.log("TradeManager trusted forwarder updated", forwarder);
+            }
+            if (registry.trustedForwarder() != forwarder) {
+                registry.setTrustedForwarder(forwarder);
+                console2.log("WhitelistRegistry trusted forwarder updated", forwarder);
+            }
+            if (gold.trustedForwarder() != forwarder) {
+                gold.setTrustedForwarder(forwarder);
+                console2.log("GoldNFT trusted forwarder updated", forwarder);
+            }
         }
 
         if (ap != address(0)) {
-            trade.grantRole(StoexRoles.AP_ROLE, ap);
-            gold.grantRole(StoexRoles.AP_ROLE, ap);
-            timelock.grantRole(StoexRoles.AP_ROLE, ap);
+            if (!trade.hasRole(StoexRoles.AP_ROLE, ap)) trade.grantRole(StoexRoles.AP_ROLE, ap);
+            if (!gold.hasRole(StoexRoles.AP_ROLE, ap)) gold.grantRole(StoexRoles.AP_ROLE, ap);
+            if (!timelock.hasRole(StoexRoles.AP_ROLE, ap)) timelock.grantRole(StoexRoles.AP_ROLE, ap);
         }
-        if (vp != address(0)) trade.grantRole(StoexRoles.VP_ROLE, vp);
+        if (vp != address(0) && !trade.hasRole(StoexRoles.VP_ROLE, vp)) trade.grantRole(StoexRoles.VP_ROLE, vp);
         if (at != address(0)) {
-            trade.grantRole(StoexRoles.AT_ROLE, at);
-            gov.grantRole(StoexRoles.AT_ROLE, at);
-            registry.grantRole(StoexRoles.AT_ROLE, at);
-            timelock.grantRole(StoexRoles.AT_ROLE, at);
+            if (!trade.hasRole(StoexRoles.AT_ROLE, at)) trade.grantRole(StoexRoles.AT_ROLE, at);
+            if (!gov.hasRole(StoexRoles.AT_ROLE, at)) gov.grantRole(StoexRoles.AT_ROLE, at);
+            if (!registry.hasRole(StoexRoles.AT_ROLE, at)) registry.grantRole(StoexRoles.AT_ROLE, at);
+            if (!timelock.hasRole(StoexRoles.AT_ROLE, at)) timelock.grantRole(StoexRoles.AT_ROLE, at);
         }
-        if (pap != address(0)) trade.grantRole(StoexRoles.PAP_ROLE, pap);
-        if (aud != address(0)) trade.grantRole(StoexRoles.AUDITOR_ROLE, aud);
+        if (pap != address(0) && !trade.hasRole(StoexRoles.PAP_ROLE, pap)) trade.grantRole(StoexRoles.PAP_ROLE, pap);
+        if (aud != address(0) && !trade.hasRole(StoexRoles.AUDITOR_ROLE, aud)) {
+            trade.grantRole(StoexRoles.AUDITOR_ROLE, aud);
+        }
 
         vm.stopBroadcast();
         console2.log("ConfigureRoles completed");

@@ -21,7 +21,6 @@ contract MintFlow is Script {
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
 
         uint256 amountUg = vm.envOr("MINT_AMOUNT_UG", uint256(1_000_000)); // default 1 g
-        address creditTo = vm.envAddress("MINT_CREDIT_TO");
         bytes32 vaultReceiptId = vm.envOr("MINT_VAULT_RECEIPT_ID", _DEFAULT_VAULT_RECEIPT_ID);
 
         StoexTypes.MintLotMeta memory lot = StoexTypes.MintLotMeta({
@@ -36,7 +35,7 @@ contract MintFlow is Script {
         });
 
         vm.startBroadcast(apPk);
-        uint256 requestId = trade.proposeMint(amountUg, creditTo, vaultReceiptId, lot);
+        uint256 requestId = trade.proposeMint(amountUg, vaultReceiptId, lot);
         vm.stopBroadcast();
 
         vm.startBroadcast(vpPk);

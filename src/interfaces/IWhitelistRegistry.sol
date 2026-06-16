@@ -13,4 +13,7 @@ interface IWhitelistRegistry {
     function isEligibleForNonKycUser(address wallet) external view returns (bool);
 
     function getProfile(address wallet) external view returns (StoexTypes.UserProfile memory);
+
+    /// @notice True when `wallet` holds `USER_ROLE` on the registry (onboarded investor).
+    function hasUserRole(address wallet) external view returns (bool);
 }

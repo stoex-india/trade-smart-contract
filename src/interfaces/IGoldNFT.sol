@@ -14,17 +14,19 @@ interface IGoldNFT {
 
     function getUserLotIds(address beneficiary) external view returns (uint256[] memory);
 
+    function getPoolLotIds() external view returns (uint256[] memory);
+
     function mintCertificate(address user) external;
 
     function mintCertificateForTrade(address user) external;
 
-    function increaseSupply(
-        address user,
-        uint256 amountUg,
-        StoexTypes.MintLotMeta calldata lot,
-        uint256 requestId,
-        StoexTypes.TxType historyKind
-    ) external returns (uint256 lotId);
+    /// @notice PRD mint: vaulted gold enters AP buy pool (`totalGoldSupply` and `totalAssetProviderBalance` increase).
+    function mintToPool(uint256 amountUg, StoexTypes.MintLotMeta calldata lot, uint256 requestId)
+        external
+        returns (uint256 lotId);
+
+    /// @notice PRD burn: unsold AP pool inventory is removed (`totalGoldSupply` and `totalAssetProviderBalance` decrease).
+    function burnFromPool(uint256 amountUg, uint256 requestId) external;
 
     function decreaseSupply(address user, uint256 amountUg, StoexTypes.TxType txType, uint256 requestId) external;
 

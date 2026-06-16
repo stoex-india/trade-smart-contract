@@ -8,7 +8,7 @@ pragma solidity ^0.8.24;
 /// - Checks `WhitelistRegistry.isEligible` / `isEligibleForNonKycUser` for user-facing operations.
 /// - Uses `EscrowVault` for sell/redeem pending locks; `TimelockController` blocks sell/redeem when wallet or any user lot is locked.
 /// - Mutates `GoldNFT` only via `TRADE_MANAGER_ROLE`.
-/// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (burn debits this whitelisted account).
+/// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (legacy routing slot; burn debits AP pool).
 /// **Gold amounts** in request structs and checks are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`.
 /// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -151,6 +151,13 @@ contract TradeManager is
         return _trustedForwarderValue;
     }
 
+    /// @notice Called only by `WhitelistRegistry` during user onboarding to grant trade `USER_ROLE`.
+    function grantUserRoleFromRegistry(address user) external {
+        if (_msgSender() != address(whitelistRegistry)) revert NotWhitelistRegistry();
+        if (user == address(0)) revert ZeroAddress();
+        _grantRole(StoexRoles.USER_ROLE, user);
+    }
+
     /// @dev One-time routing configuration (escrow release destinations and vault burn bookkeeping).
     function setRoutingAddresses(address assetProviderPayout_, address redeemSink_, address vaultBookkeeping_)
         external
@@ -267,7 +274,7 @@ contract TradeManager is
         emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
-    function proposeMint(uint256 amountUg, address creditTo, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
+    function proposeMint(uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
         external
         onlyRole(StoexRoles.AP_ROLE)
         whenNotPaused
@@ -275,7 +282,6 @@ contract TradeManager is
         returns (uint256 requestId)
     {
         if (!routingConfigured) revert RoutingNotSet();
-        _requireEligible(creditTo);
         _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
@@ -288,7 +294,7 @@ contract TradeManager is
             requestType: StoexTypes.RequestType.Mint,
             status: StoexTypes.RequestStatus.Proposed,
             initiator: _msgSender(),
-            targetUser: creditTo,
+            targetUser: address(0),
             amountUg: amountUg,
             paymentRefId: bytes32(0),
             vaultReceiptId: vaultReceiptId,
@@ -469,40 +475,6 @@ contract TradeManager is
         return _requests[requestId].status;
     }
 
-    /// @notice EIP-712 digest for `CoSignBatch(uint256 requestId,uint256 nonce,uint256 deadline)` (for wallets & tests).
-    function hashCoSignBatch(uint256 requestId, uint256 nonce, uint256 deadline) public view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(CO_SIGN_TYPEHASH, requestId, nonce, deadline)));
-    }
-
-    function getUserRequests(address user, uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory ids, TradeRequest[] memory rows)
-    {
-        if (limit > 100) limit = 100;
-        uint256 n = nextRequestId;
-        uint256[] memory tmp = new uint256[](n);
-        uint256 c;
-        for (uint256 i = 1; i <= n; i++) {
-            if (_requests[i].initiator == user || _requests[i].targetUser == user) {
-                tmp[c++] = i;
-            }
-        }
-        if (offset >= c) {
-            return (new uint256[](0), new TradeRequest[](0));
-        }
-        uint256 end = offset + limit;
-        if (end > c) end = c;
-        uint256 len = end - offset;
-        ids = new uint256[](len);
-        rows = new TradeRequest[](len);
-        for (uint256 j = 0; j < len; j++) {
-            uint256 id = tmp[offset + j];
-            ids[j] = id;
-            rows[j] = _requests[id];
-        }
-    }
-
     /// @dev Assumes `createBuyRequest` already validated pool, caps, and eligibility (same tx, nonReentrant).
     function _finalizeBuy(
         uint256 requestId,
@@ -560,23 +532,17 @@ contract TradeManager is
             r.escrowLocked = false;
             goldNFT.decreaseSupply(r.targetUser, r.amountUg, StoexTypes.TxType.Redeem, requestId);
         } else if (r.requestType == StoexTypes.RequestType.Mint) {
-            address u = r.targetUser;
-            _requireEligible(u);
-            if (goldNFT.tokenIdByBeneficiary(u) == 0) {
-                goldNFT.mintCertificateForTrade(u);
-            }
-            uint256 lotId = goldNFT.increaseSupply(u, r.amountUg, r.mintLot, requestId, StoexTypes.TxType.Mint);
+            uint256 lotId = goldNFT.mintToPool(r.amountUg, r.mintLot, requestId);
             uint256 dur = governance.defaultTimelockDuration();
             if (dur > 0) {
                 timelockController.applyMintLotTimelock(lotId, block.timestamp + dur);
             }
         } else if (r.requestType == StoexTypes.RequestType.Burn) {
-            _requireEligible(vaultBookkeeping);
-            goldNFT.decreaseSupply(vaultBookkeeping, r.amountUg, StoexTypes.TxType.Burn, requestId);
+            goldNFT.burnFromPool(r.amountUg, requestId);
         }
     }
 
-    /// @dev PRD burn reduces system supply from the configured bookkeeping holder.
+    /// @dev PRD burn reduces unsold AP pool inventory and total system supply.
     function _emptyLot() private pure returns (StoexTypes.MintLotMeta memory m) {
         return m;
     }
@@ -679,6 +645,7 @@ contract TradeManager is
     uint256[34] private __gap;
 
     error ZeroAddress();
+    error NotWhitelistRegistry();
     error NotEligible();
     error ZeroAmount();
     error ExceedsMax();
