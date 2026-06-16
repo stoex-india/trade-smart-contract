@@ -1,302 +1,245 @@
-# Frontend User Onboarding — STOEX Gold (Polygon Amoy)
+# User Onboarding — Frontend Integration Guide
 
-This guide covers **self-service user registration** from the frontend (Tresori gasless), **admin KYC verification**, and **ops `cast` commands** to confirm a wallet is ready to buy.
+How to onboard investors on **Polygon Amoy** using Tresori gasless transactions.
 
-Mint and buy integration are separate phases; complete onboarding verification before wiring the mint ops panel.
+**Scope of this doc:** register user → check status → admin verifies KYC.  
+**Not in this doc:** buy and mint (see [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) and [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md)).
 
 ---
 
-## Network and deployment
+## 1. What you are building
 
-| Item | Value |
-|------|-------|
-| Chain | Polygon Amoy |
+Two steps:
+
+1. **User signs up** — frontend calls `registerUser` (gasless). User can **buy only** (with limits) while KYC is pending.
+2. **Admin verifies KYC** — backend/admin calls `verifyKYC`. User gets **full access** (buy, sell, redeem).
+
+The user's **wallet address** comes from Tresori MPC (`fromAddress`). You never pass the wallet into `registerUser` — the contract reads it from the transaction sender.
+
+---
+
+## 2. Config (put in frontend env)
+
+| Key | Value |
+|-----|-------|
 | Chain ID | `80002` |
-| Gasless forwarder (Tresori) | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` |
+| RPC | Your Amoy RPC URL |
+| `WHITELIST_REGISTRY` | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` |
+| `TRADE_MANAGER` | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` |
+| `GOVERNANCE_CONFIG` | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` |
+| Tresori forwarder | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` |
 
-### Smart contract addresses (current deployment)
-
-| Contract | Address | Role in onboarding |
-|----------|---------|-------------------|
-| **WhitelistRegistry** | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` | `registerUser`, `verifyKYC`, eligibility reads |
-| **TradeManager** | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` | `USER_ROLE` for `createBuyRequest` (phase 2) |
-| **GoldNFT** | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` | Holdings / certificate reads |
-| **GovernanceConfig** | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` | Buy limits, non-KYC fiat cap |
-| **EscrowVault** | `0xbb40B6f14bfa98322a5aDdc1D5accc92D917c891` | Sell/redeem escrow (post-onboarding) |
-| **TimelockController** | `0xdb3Eedb2C1dfb820b3A59d6d349f6620c8474D2E` | Timelocks (post-onboarding) |
-
-ABI files: `abi/WhitelistRegistry.abi.json`, `abi/TradeManager.abi.json` (regenerate after contract changes with `forge inspect`).
+**ABI:** `abi/WhitelistRegistry.abi.json`
 
 ---
 
-## End-to-end flow
+## 3. Flow in plain English
 
-```mermaid
-sequenceDiagram
-    participant User as User (Tresori MPC wallet)
-    participant FE as Frontend
-    participant Tresori as Tresori relayer
-    participant WR as WhitelistRegistry
-    participant TM as TradeManager
-    participant Admin as Admin panel
-
-    User->>FE: Sign up / connect wallet
-    FE->>Tresori: writeGasless registerUser(userId, kycRef)
-    Tresori->>WR: registerUser (ERC-2771, msg.sender = user)
-    WR->>TM: grantUserRoleFromRegistry(user)
-    WR-->>FE: UserRegistered event
-
-    Note over User,WR: KYC Pending — buy-only path (fiat cap)
-
-    Admin->>WR: verifyKYC(wallet) [admin tx, not gasless]
-    WR-->>FE: KYCStatusChanged → Verified
-
-    Note over User,TM: Full access — sell/redeem + full buy caps
-
-    Note over TM: Buy still needs AP pool inventory (mint flow, separate doc)
+```
+User opens app → connects Tresori wallet
+       ↓
+Frontend calls registerUser(userId, kycRef)  [gasless]
+       ↓
+On-chain: profile created, KYC = Pending, USER_ROLE granted
+       ↓
+User can BUY only (limited by non-KYC fiat cap)
+       ↓
+Admin panel calls verifyKYC(wallet)  [admin wallet, not gasless]
+       ↓
+On-chain: KYC = Verified
+       ↓
+User can BUY / SELL / REDEEM (full access)
 ```
 
-### KYC tiers
-
-| Stage | `kycStatus` | `isEligible` | `isEligibleForNonKycUser` | Can buy? | Can sell/redeem? |
-|-------|-------------|--------------|---------------------------|----------|------------------|
-| After `registerUser` | Pending (`0`) | `false` | `true` | Yes, within **non-KYC fiat cap** | No |
-| After `verifyKYC` | Verified (`1`) | `true` | `false` | Yes, full caps | Yes |
-| After `rejectKYC` | Rejected (`2`) | `false` | `false` | No | No |
-
-Default on-chain non-KYC fiat cap: **50,000,000** minor INR units (e.g. paise — confirm product mapping in UI).
+**Note:** Buy will still fail until the AP gold pool has inventory (mint flow). Onboarding only prepares the user account.
 
 ---
 
-## Phase 1 — User self-registration (frontend, gasless)
+## 4. User states (what to show in UI)
+
+After registration, use these **read calls** (no gas) to drive UI:
+
+| Function | When `true` | Meaning |
+|----------|-------------|---------|
+| `hasUserRole(wallet)` | Registered | User completed `registerUser` |
+| `isEligibleForNonKycUser(wallet)` | Pending KYC | Can use **buy only** (fiat cap applies) |
+| `isEligible(wallet)` | KYC verified | **Full access** |
+
+**`kycStatus`** from `getProfile(wallet)`:
+
+| Value | Name | UI suggestion |
+|-------|------|---------------|
+| `0` | Pending | "KYC in progress" — show buy-only |
+| `1` | Verified | "Verified" — full features |
+| `2` | Rejected | "Not eligible" — block trades |
+
+Default non-KYC buy cap (on-chain): `nonKycMaxBuyFiatAmount()` = `50000000` (INR minor units — align with product).
+
+---
+
+## 5. Step 1 — `registerUser` (frontend, gasless)
 
 **Contract:** `WhitelistRegistry`  
-**Function:** `registerUser(bytes32 userId, string kycRef)`  
-**Signer:** User's Tresori MPC `fromAddress` (wallet is inferred on-chain; do **not** pass a wallet argument).
+**Function:** `registerUser(bytes32 userId, string kycRef)`
+
+### Parameters
+
+| Param | Type | What to pass |
+|-------|------|--------------|
+| `userId` | `bytes32` | Your **backend user id**, hashed. Not the wallet. Example: `ethers.id("user-12345")` or `ethers.id(dbUser.uuid)`. Store the same value in your DB. |
+| `kycRef` | `string` | Your KYC case reference, e.g. `"KYC-SUMSUB-abc123"`. Free-form string for compliance audit. |
+
+### Tresori call example
 
 ```ts
-import WhitelistRegistryAbi from "../abi/WhitelistRegistry.abi.json";
-
-// userId: stable id from your DB, encoded as bytes32 (see below)
-const userIdBytes32 = ethers.id("user-12345"); // or keccak256 of your id string
-const kycRef = "KYC-REF-FROM-BACKOFFICE";
+const userId = ethers.id(backendUser.id);   // bytes32 from your DB user id
+const kycRef = backendUser.kycCaseRef;      // string from KYC provider
 
 await TreSori().writeGaslessMpcSmartContractTransaction({
-  contractAddress: "0xF6f299F574f136873e7Df9D54311AA62d09B9D52",
+  contractAddress: WHITELIST_REGISTRY,
   functionName: "registerUser",
-  params: [userIdBytes32, kycRef],
+  params: [userId, kycRef],
   abi: ["function registerUser(bytes32 userId,string kycRef)"],
-  fromAddress: userMpcWalletAddress,
-  chain: selectedChain, // Amoy 80002
+  fromAddress: userMpcWallet,   // Tresori MPC address — this becomes the on-chain wallet
+  chain: selectedChain,
   clientShare,
   sessionId,
   rpcUrl: AMOY_RPC_URL,
 });
 ```
 
-**On success (same transaction):**
+### What happens on success (same tx)
 
-- Profile created with `kycStatus = Pending`
+- User profile saved on `WhitelistRegistry`
 - `USER_ROLE` granted on `WhitelistRegistry` and `TradeManager`
-- `UserRegistered(wallet, userId)` event emitted
+- Event: `UserRegistered(wallet, userId)`
 
-**`userId` encoding:** use a deterministic `bytes32` from your backend user id, e.g. `ethers.id(backendUserId)` or `keccak256(abi.encodePacked(backendUserId))`. Store the same value in your DB for audit.
+### Errors to handle
 
-**UI reads after register (no gas):**
+| Error | Meaning |
+|-------|---------|
+| `AlreadyRegistered` | This wallet already called `registerUser` — read profile instead of re-registering |
+
+### After register — read calls for UI
 
 ```ts
-const profile = await registry.getProfile(wallet);
-const canBuyPending = await registry.isEligibleForNonKycUser(wallet);
-const hasUserRole = await registry.hasUserRole(wallet);
+const profile = await registry.getProfile(userMpcWallet);
+const pendingBuyOk = await registry.isEligibleForNonKycUser(userMpcWallet);
+const fullAccess = await registry.isEligible(userMpcWallet);
 ```
+
+`getProfile` returns: `userId`, `wallet`, `kycStatus`, `walletStatus`, `userStatus`, `riskLevel`, `kycRef`, `registeredAt`.
 
 ---
 
-## Phase 2 — Admin KYC verification (backend / admin panel)
+## 6. Step 2 — `verifyKYC` (admin backend only)
 
 **Contract:** `WhitelistRegistry`  
 **Function:** `verifyKYC(address wallet)`  
-**Signer:** operations admin (`DEFAULT_ADMIN_ROLE`) — **not** gasless; use secure backend key or admin MPC.
+**Who signs:** Admin wallet with `DEFAULT_ADMIN_ROLE` — **not** the user, **not** gasless in user app.
+
+Call this from your **admin panel / backend** after off-chain KYC passes.
 
 ```ts
-// Admin-only — do not expose private key in frontend
-await adminSigner.sendTransaction({
-  to: WHITELIST_REGISTRY,
-  data: registryInterface.encodeFunctionData("verifyKYC", [userWallet]),
-});
+// Admin signer only — never in user-facing frontend
+await registry.verifyKYC(userWalletAddress);
 ```
 
-Optional back-office registration (skip user self-register):  
-`adminRegisterUser(bytes32 userId, address wallet, string kycRef)` — same admin signer.
+After success: `isEligible(wallet)` → `true`, `isEligibleForNonKycUser(wallet)` → `false`.
+
+### Optional: admin registers user instead of self-service
+
+If you skip user `registerUser` and onboard from admin panel:
+
+`adminRegisterUser(bytes32 userId, address wallet, string kycRef)` — same admin signer, includes wallet explicitly.
 
 ---
 
-## Phase 3 — Ops verification (`cast` commands)
+## 7. Read-only helpers for buy UI (later)
 
-Use these after frontend onboarding to confirm a wallet is ready for **buy** integration.
+When you add buy, validate against these **before** sending a tx:
 
-### Setup
+```ts
+await governance.minimumBuyGoldValueInUg();  // min gold per buy (µg)
+await governance.maxAmountPerTx();             // max gold per tx (µg), default 1 kg
+await governance.nonKycMaxBuyFiatAmount();     // pending-KYC fiat cap
+await governance.dailyBuyCap();                // verified users only
+```
+
+Gold amounts are **micrograms (µg)**: `1 gram = 1_000_000`.
+
+---
+
+## 8. Ops verification (`cast` — for backend team)
+
+Run after a user registers in the app to confirm they are set up correctly.
 
 ```shell
 cd trade-smart-contract
 source .env
-
-# Wallet to check (user's MPC / investor address)
-export WALLET=0xYourUserWalletAddress
+export WALLET=0xUserMpcWalletAddress
 ```
 
-### 1) Profile and KYC state
+**Profile + eligibility:**
 
 ```shell
-cast call $WHITELIST_REGISTRY \
-  "getProfile(address)((bytes32,address,uint8,uint8,uint8,uint8,string,uint256))" \
-  $WALLET --rpc-url $AMOY_RPC_URL
-```
-
-Tuple fields: `userId`, `wallet`, `kycStatus`, `walletStatus`, `userStatus`, `riskLevel`, `kycRef`, `registeredAt`.
-
-**`kycStatus`:** `0` = Pending, `1` = Verified, `2` = Rejected.
-
-### 2) Eligibility flags
-
-```shell
-# Full platform access (verified KYC)
+cast call $WHITELIST_REGISTRY "getProfile(address)((bytes32,address,uint8,uint8,uint8,uint8,string,uint256))" $WALLET --rpc-url $AMOY_RPC_URL
 cast call $WHITELIST_REGISTRY "isEligible(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
-
-# Pending-KYC buy-only path
 cast call $WHITELIST_REGISTRY "isEligibleForNonKycUser(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
-
-# Onboarded investor flag
 cast call $WHITELIST_REGISTRY "hasUserRole(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
 ```
 
-### 3) Trade `USER_ROLE` (required for `createBuyRequest`)
+**USER_ROLE on TradeManager (needed for buy later):**
 
 ```shell
 USER_ROLE=$(cast keccak "USER_ROLE")
-
 cast call $TRADE_MANAGER "hasRole(bytes32,address)(bool)" $USER_ROLE $WALLET --rpc-url $AMOY_RPC_URL
-cast call $WHITELIST_REGISTRY "hasRole(bytes32,address)(bool)" $USER_ROLE $WALLET --rpc-url $AMOY_RPC_URL
 ```
 
-### 4) Buy policy limits (for UI validation)
+**Admin verify KYC from CLI (if admin UI not ready):**
 
 ```shell
-cast call $GOVERNANCE_CONFIG "minimumBuyGoldValueInUg()(uint256)" --rpc-url $AMOY_RPC_URL
-cast call $GOVERNANCE_CONFIG "maxAmountPerTx()(uint256)" --rpc-url $AMOY_RPC_URL
-cast call $GOVERNANCE_CONFIG "nonKycMaxBuyFiatAmount()(uint256)" --rpc-url $AMOY_RPC_URL
-cast call $GOVERNANCE_CONFIG "dailyBuyCap()(uint256)" --rpc-url $AMOY_RPC_URL
+cast send $WHITELIST_REGISTRY "verifyKYC(address)" $WALLET \
+  --rpc-url $AMOY_RPC_URL --private-key $PRIVATE_KEY --legacy --gas-price 35gwei
 ```
 
-### 5) System readiness for buy (AP pool — separate from user onboarding)
+### User ready for buy?
 
-Buys revert with `InsufficientApInventory` if the pool is empty. Check before enabling buy in production:
+| Pending KYC (buy-only) | Verified KYC (full) |
+|------------------------|---------------------|
+| `hasUserRole` = true | `hasUserRole` = true |
+| `isEligibleForNonKycUser` = true | `isEligible` = true |
+| `kycStatus` = 0 | `kycStatus` = 1 |
+| USER_ROLE on TradeManager = true | USER_ROLE on TradeManager = true |
+
+**System ready for buy** (separate check — ops/mint team):
 
 ```shell
 cast call $GOLD_NFT "totalAssetProviderBalance()(uint256)" --rpc-url $AMOY_RPC_URL
-cast call $GOLD_NFT "totalGoldSupply()(uint256)" --rpc-url $AMOY_RPC_URL
-cast call $GOLD_NFT "circulatingSupply()(uint256)" --rpc-url $AMOY_RPC_URL
 ```
 
-Pool must be **≥ buy amount in µg** (`1 gram = 1_000_000 µg`). Inventory enters via **mint flow** (`proposeMint` → approvals → `executeRequest`), not user onboarding.
-
-### 6) Gasless wiring sanity check
-
-```shell
-cast call $WHITELIST_REGISTRY "trustedForwarder()(address)" --rpc-url $AMOY_RPC_URL
-cast call $TRADE_MANAGER "trustedForwarder()(address)" --rpc-url $AMOY_RPC_URL
-cast call $TRADE_MANAGER "routingConfigured()(bool)" --rpc-url $AMOY_RPC_URL
-```
-
-Expected forwarder: `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D`.  
-Expected `routingConfigured`: `true`.
+Must be `> 0` before any buy works. See [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md).
 
 ---
 
-## “Ready to buy” checklist (per wallet)
+## 9. Integration checklist
 
-Run the commands above. A wallet is **user-ready** when:
+**Frontend (user app)**
 
-| Check | Pending KYC (buy-only) | Verified KYC (full) |
-|-------|------------------------|---------------------|
-| `getProfile(...).registeredAt` | `> 0` | `> 0` |
-| `hasUserRole(wallet)` | `true` | `true` |
-| `hasRole(USER_ROLE)` on TradeManager | `true` | `true` |
-| `isEligibleForNonKycUser` | `true` | `false` |
-| `isEligible` | `false` | `true` |
-| `kycStatus` | `0` (Pending) | `1` (Verified) |
+- [ ] Load `WHITELIST_REGISTRY` address and ABI
+- [ ] On sign-up, call gasless `registerUser(userId, kycRef)` with Tresori `fromAddress`
+- [ ] Encode `userId` as `bytes32` from backend user id
+- [ ] After tx, read `getProfile` / `isEligibleForNonKycUser` for UI state
+- [ ] Do **not** call `verifyKYC` from user app
 
-A wallet is **system-ready for buy** when additionally:
+**Admin backend**
 
-| Check | Expected |
-|-------|----------|
-| `GoldNFT.totalAssetProviderBalance()` | `>=` intended buy size (µg) |
-| `TradeManager.routingConfigured()` | `true` |
+- [ ] Call `verifyKYC(wallet)` when off-chain KYC passes
+- [ ] Optionally use `adminRegisterUser` for manual onboarding
 
-Until mint funds the AP pool, onboarding can succeed but **`createBuyRequest` will still revert**.
+**Before enabling buy**
+
+- [ ] User passes checklist in §8
+- [ ] `totalAssetProviderBalance > 0` (mint completed)
 
 ---
-
-## One-liner ops script (copy/paste)
-
-Replace `WALLET` and run from repo root after `source .env`:
-
-```shell
-export WALLET=0xYourUserWalletAddress
-USER_ROLE=$(cast keccak "USER_ROLE")
-
-echo "=== Profile ==="
-cast call $WHITELIST_REGISTRY "getProfile(address)((bytes32,address,uint8,uint8,uint8,uint8,string,uint256))" $WALLET --rpc-url $AMOY_RPC_URL
-
-echo "=== Eligibility ==="
-echo -n "isEligible: "; cast call $WHITELIST_REGISTRY "isEligible(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
-echo -n "isEligibleForNonKycUser: "; cast call $WHITELIST_REGISTRY "isEligibleForNonKycUser(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
-echo -n "hasUserRole: "; cast call $WHITELIST_REGISTRY "hasUserRole(address)(bool)" $WALLET --rpc-url $AMOY_RPC_URL
-
-echo "=== USER_ROLE ==="
-echo -n "TradeManager: "; cast call $TRADE_MANAGER "hasRole(bytes32,address)(bool)" $USER_ROLE $WALLET --rpc-url $AMOY_RPC_URL
-echo -n "Registry: "; cast call $WHITELIST_REGISTRY "hasRole(bytes32,address)(bool)" $USER_ROLE $WALLET --rpc-url $AMOY_RPC_URL
-
-echo "=== Buy policy ==="
-echo -n "nonKycMaxBuyFiatAmount: "; cast call $GOVERNANCE_CONFIG "nonKycMaxBuyFiatAmount()(uint256)" --rpc-url $AMOY_RPC_URL
-echo -n "minimumBuyGoldValueInUg: "; cast call $GOVERNANCE_CONFIG "minimumBuyGoldValueInUg()(uint256)" --rpc-url $AMOY_RPC_URL
-echo -n "maxAmountPerTx: "; cast call $GOVERNANCE_CONFIG "maxAmountPerTx()(uint256)" --rpc-url $AMOY_RPC_URL
-
-echo "=== AP pool (system buy readiness) ==="
-echo -n "totalAssetProviderBalance: "; cast call $GOLD_NFT "totalAssetProviderBalance()(uint256)" --rpc-url $AMOY_RPC_URL
-echo -n "totalGoldSupply: "; cast call $GOLD_NFT "totalGoldSupply()(uint256)" --rpc-url $AMOY_RPC_URL
-```
-
----
-
-## Admin: verify KYC from CLI (optional)
-
-If the user registered via frontend but admin panel is not ready:
-
-```shell
-source .env
-cast send $WHITELIST_REGISTRY "verifyKYC(address)" $WALLET \
-  --rpc-url $AMOY_RPC_URL \
-  --private-key $PRIVATE_KEY
-```
-
-Requires admin `DEFAULT_ADMIN_ROLE` on `WhitelistRegistry`.
-
----
-
-## What comes next (mint → buy)
-
-1. **Mint flow (ops):** see **[FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md)** — `proposeMint` → VP → AT → admin `executeRequest`; credits AP buy pool.
-2. **Buy flow (user, gasless):** `createBuyRequest(weightUg, fiat_value, payment_ref, txDetailsHash)` — auto-executes in one tx; requires onboarded `USER_ROLE` + pool inventory.
-
-See `README.md` §7 and `docs/FRONTEND_INTEGRATION_GUIDE.md` for buy payloads.
-
----
-
-## Related docs
-
-- [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md) — gasless patterns for all operations
-- [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md) — user onboarding
-- [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) — mint ops / AP pool
-- [SMART_CONTRACTS_OVERVIEW.md](./SMART_CONTRACTS_OVERVIEW.md) — contract surface reference
-- [README.md](../README.md) — deploy, roles, script flows
