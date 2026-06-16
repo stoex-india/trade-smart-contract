@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 
 import {GovernanceConfig} from "../src/GovernanceConfig.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
@@ -25,10 +24,11 @@ contract DeployAmoy is Script {
         address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", initialAdmin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
         address vaultBk = vm.envOr("VAULT_BOOKKEEPING", initialAdmin);
-        string memory forwarderName = vm.envOr("FORWARDER_NAME", string("STOEX Forwarder"));
+        // Tresori facilitator / relayer contract used as ERC-2771 trusted forwarder.
+        address trustedForwarder = vm.envAddress("RELAYER_SMART_CONTRACT");
+        if (trustedForwarder == address(0)) revert("RELAYER_SMART_CONTRACT is zero");
 
         vm.startBroadcast(pk);
-        address forwarder = address(new ERC2771Forwarder(forwarderName));
 
         address gov;
         {
@@ -40,7 +40,7 @@ contract DeployAmoy is Script {
         {
             WhitelistRegistry impl = new WhitelistRegistry();
             registry = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (deployer, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (deployer, trustedForwarder)))
             );
         }
 
@@ -48,7 +48,7 @@ contract DeployAmoy is Script {
         {
             GoldNFT impl = new GoldNFT();
             gold = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (deployer, registry, forwarder)))
+                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (deployer, registry, trustedForwarder)))
             );
         }
 
@@ -75,7 +75,7 @@ contract DeployAmoy is Script {
                 new ERC1967Proxy(
                     address(impl),
                     abi.encodeCall(
-                        TradeManager.initialize, (deployer, gov, registry, gold, escrow, timelock, forwarder)
+                        TradeManager.initialize, (deployer, gov, registry, gold, escrow, timelock, trustedForwarder)
                     )
                 )
             );
@@ -93,6 +93,7 @@ contract DeployAmoy is Script {
             EscrowVault(escrow).setTradeManager(trade);
             TimelockController(timelock).setTradeManager(trade);
             GoldNFT(gold).grantRole(StoexRoles.TRADE_MANAGER_ROLE, trade);
+            WhitelistRegistry(registry).setTradeManager(trade);
         } else {
             console2.log("INITIAL_ADMIN != deployer: run WireProxiesAdmin.s.sol with admin PRIVATE_KEY");
         }
@@ -100,7 +101,7 @@ contract DeployAmoy is Script {
         vm.stopBroadcast();
 
         console2.log("GovernanceConfig", gov);
-        console2.log("ERC2771Forwarder", forwarder);
+        console2.log("Trusted forwarder", trustedForwarder);
         console2.log("WhitelistRegistry", registry);
         console2.log("GoldNFT", gold);
         console2.log("EscrowVault", escrow);

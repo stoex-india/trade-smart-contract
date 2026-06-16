@@ -4,11 +4,11 @@ pragma solidity ^0.8.24;
 /// @title STOEX Gold — GoldNFT
 /// @notice **Soulbound** ERC-721 certificate: at most one token per **beneficiary** (economic owner). ERC-721 `ownerOf` is **custody** (may differ after nominee transfer).
 /// @dev UUPS upgradeable. Supply accounting:
-/// - `totalGoldSupply`: canonical **micrograms (µg)** on-chain; increases only on mint (`increaseSupply`), decreases on redeem/burn (`decreaseSupply`).
-/// - `totalAssetProviderBalance`: micrograms in AP buy pool; increases on sell returns and admin seeding; decreases on buy (`transferFromAPToUser`); mint adds holding without consuming pool; burn debits vault holding.
+/// - `totalGoldSupply`: canonical **micrograms (µg)** on-chain; increases on PRD mint (`mintToPool`), decreases on redeem/burn (`decreaseSupply` / `burnFromPool`).
+/// - `totalAssetProviderBalance`: unsold AP retail pool; increases on mint (`mintToPool`) and sell returns; decreases on buy (`transferFromAPToUser`) and burn (`burnFromPool`).
 /// - `circulatingSupply()` = `totalGoldSupply - totalAssetProviderBalance` (µg with users vs pool).
 /// - `userHolding` tracks micrograms per beneficiary.
-/// - `increaseSupply` / `transferFromAPToUser` / `decreaseSupply` are restricted to `TRADE_MANAGER_ROLE`.
+/// - `mintToPool` / `burnFromPool` / `transferFromAPToUser` / `decreaseSupply` are restricted to `TRADE_MANAGER_ROLE`.
 /// - `mintCertificate` is `AP_ROLE`; `mintCertificateForTrade` is `TRADE_MANAGER_ROLE` for automated first purchase/mint execution.
 /// - Transfers are blocked in `_update` except mint/burn/admin nominee flow (`_nomineeTransferActive`).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -48,6 +48,7 @@ contract GoldNFT is
     mapping(uint256 => address) public beneficiaryOfToken;
     mapping(uint256 => StoexTypes.MintLotMeta) private _mintLots;
     mapping(address => uint256[]) private _userLotIds;
+    uint256[] private _poolLotIds;
 
     mapping(address => StoexTypes.TxRecord[]) private _txHistory;
 
@@ -59,6 +60,8 @@ contract GoldNFT is
     event CertificateMinted(address indexed user, uint256 tokenId);
     event SupplyIncreased(uint256 amountUg, address indexed user, uint256 lotId);
     event SupplyDecreased(uint256 amountUg, address indexed user, StoexTypes.TxType txType);
+    event PoolInventoryMinted(uint256 amountUg, uint256 lotId, uint256 requestId);
+    event PoolInventoryBurned(uint256 amountUg, uint256 requestId);
     event MetadataUpdated(uint256 tokenId, string uri);
     event NomineeTransferred(address indexed fromBeneficiary, address indexed toCustody, uint256 tokenId);
     event WhitelistRegistryUpdated(address registry);
@@ -128,13 +131,8 @@ contract GoldNFT is
         emit CertificateMinted(user, tokenId);
     }
 
-    function increaseSupply(
-        address user,
-        uint256 amountUg,
-        StoexTypes.MintLotMeta calldata lot,
-        uint256 requestId,
-        StoexTypes.TxType historyKind
-    )
+    /// @notice PRD mint path: tokenize vaulted gold into the AP buy pool (no user credit).
+    function mintToPool(uint256 amountUg, StoexTypes.MintLotMeta calldata lot, uint256 requestId)
         external
         override
         onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
@@ -142,29 +140,35 @@ contract GoldNFT is
         nonReentrant
         returns (uint256 lotId)
     {
-        if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
-        if (tokenIdByBeneficiary[user] == 0) revert NoCertificate();
         if (amountUg == 0) revert ZeroAmount();
 
         lotId = ++_nextLotId;
         StoexTypes.MintLotMeta memory m = lot;
         m.amountUg = amountUg;
         _mintLots[lotId] = m;
-        _userLotIds[user].push(lotId);
+        _poolLotIds.push(lotId);
 
-        userHolding[user] += amountUg;
         totalGoldSupply += amountUg;
+        totalAssetProviderBalance += amountUg;
 
-        _txHistory[user].push(
-            StoexTypes.TxRecord({
-                txType: historyKind,
-                amountUg: amountUg,
-                timestamp: block.timestamp,
-                requestId: requestId
-            })
-        );
+        emit PoolInventoryMinted(amountUg, lotId, requestId);
+    }
 
-        emit SupplyIncreased(amountUg, user, lotId);
+    /// @notice PRD burn path: remove unsold inventory from the AP buy pool.
+    function burnFromPool(uint256 amountUg, uint256 requestId)
+        external
+        override
+        onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
+        if (amountUg == 0) revert ZeroAmount();
+        if (totalAssetProviderBalance < amountUg) revert InsufficientPoolInventory();
+
+        totalGoldSupply -= amountUg;
+        totalAssetProviderBalance -= amountUg;
+
+        emit PoolInventoryBurned(amountUg, requestId);
     }
 
     function decreaseSupply(address user, uint256 amountUg, StoexTypes.TxType txType, uint256 requestId)
@@ -266,6 +270,10 @@ contract GoldNFT is
         return _userLotIds[beneficiary];
     }
 
+    function getPoolLotIds() external view returns (uint256[] memory) {
+        return _poolLotIds;
+    }
+
     function getTxHistory(address user, uint256 start, uint256 end) external view returns (StoexTypes.TxRecord[] memory) {
         StoexTypes.TxRecord[] storage h = _txHistory[user];
         if (start > end || end > h.length) revert BadPagination();
@@ -340,19 +348,9 @@ contract GoldNFT is
         return totalGoldSupply - totalAssetProviderBalance;
     }
 
-    /// @notice Bootstrap gold inventory into the AP buy pool (e.g. test harness or off-chain backed vault intake).
-    function seedPoolInventory(uint256 amountUg) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
-        if (amountUg == 0) revert ZeroAmount();
-        totalGoldSupply += amountUg;
-        totalAssetProviderBalance += amountUg;
-        emit PoolInventorySeeded(amountUg);
-    }
-
     uint256 public totalAssetProviderBalance;
 
-    event PoolInventorySeeded(uint256 amountUg);
-
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 
     error ZeroAddress();
     error NotEligible();

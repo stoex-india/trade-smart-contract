@@ -13,6 +13,24 @@ forge build
 forge test -vv
 ```
 
+## Current deployment (Polygon Amoy — chain `80002`)
+
+| Contract | Proxy address |
+|----------|---------------|
+| **GovernanceConfig** | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` |
+| **WhitelistRegistry** | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` |
+| **GoldNFT** | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` |
+| **EscrowVault** | `0xbb40B6f14bfa98322a5aDdc1D5accc92D917c891` |
+| **TimelockController** | `0xdb3Eedb2C1dfb820b3A59d6d349f6620c8474D2E` |
+| **TradeManager** | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` |
+| **Tresori gasless forwarder** | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` (`RELAYER_SMART_CONTRACT`) |
+
+**Frontend onboarding:** see [docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md) (register → verify KYC → `cast` buy-readiness checks).
+
+**Mint / AP pool:** see [docs/FRONTEND_MINT_FLOW.md](docs/FRONTEND_MINT_FLOW.md) (propose → approve → execute → pool funded → buys enabled).
+
+Redeployed **June 2026** with mint-to-AP-pool supply model (no `seedPoolInventory`, no `creditTo` on `proposeMint`).
+
 ## Repository layout
 
 | Path | Purpose |
@@ -35,6 +53,8 @@ forge test -vv
 | `test/helpers/StoexFixture.sol` | Shared deployment for tests |
 | `test/StoexPRD.t.sol` | PRD-mapped integration tests |
 | `docs/` | Integration and API documentation for contracts + SDK-driven gasless flows |
+| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUser`, admin `verifyKYC`, ops `cast` verification |
+| `docs/FRONTEND_MINT_FLOW.md` | **Mint ops** — `proposeMint` → VP → AT → execute, AP pool funding, buy-readiness checks |
 
 ---
 
@@ -48,7 +68,9 @@ forge test -vv
 
 ### KYC tiers (buy vs full access)
 
-- **`registerUser`** creates a **Pending** KYC profile. **`isEligibleForNonKycUser`** is true for Pending users (whitelisted wallet, active, within risk rules). They may **`createBuyRequest` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**: cumulative executed **`fiat_value`** (INR minor units, e.g. paise) must stay within cap (Asset Trustee adjusts via **`setNonKycMaxBuyFiatAmount`**).
+- **`registerUser(bytes32 userId, string kycRef)`** — permissionless self-registration; wallet is `_msgSender()` (ERC-2771 gasless). Grants `USER_ROLE` on registry + `TradeManager`.
+- **`adminRegisterUser(bytes32 userId, address wallet, string kycRef)`** — admin back-office path (same role grants).
+- **`isEligibleForNonKycUser`** is true for **Pending** KYC users (whitelisted wallet, active, within risk rules). They may **`createBuyRequest` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**: cumulative executed **`fiat_value`** (INR minor units, e.g. paise) must stay within cap (Asset Trustee adjusts via **`setNonKycMaxBuyFiatAmount`**).
 - **`verifyKYC`** (admin) moves a user to **Verified** → **`isEligible`** is true → sell, redeem, full daily buy cap (`dailyBuyCap`), mint/burn bookkeeping paths, nominee transfer, etc., as before.
 - **`rejectKYC`** users are not eligible for the non-KYC buy path.
 
@@ -56,13 +78,13 @@ forge test -vv
 
 All gold integers are **micrograms (µg)** unless noted otherwise. **`1 gram = 1_000_000 µg`**. Off-chain UI may display grams using `GovernanceConfig.goldPrecision()` (default **6**).
 
-- **`totalGoldSupply`**: µg tracked on-chain; increases only when **`increaseSupply`** runs (mint path), decreases on redeem/burn (**`decreaseSupply`** with `Redeem` / `Burn`).
-- **`totalAssetProviderBalance`**: µg in the **Asset Provider buy pool**. Buys call **`transferFromAPToUser`** (same tx as **`createBuyRequest`**); users do not mint new supply on buy. Sells return µg to the pool (`Sell`). **`seedPoolInventory`** (admin) increases both **`totalGoldSupply`** and **`totalAssetProviderBalance`** when onboarding vaulted inventory into the pool.
-- **`circulatingSupply()`** = **`totalGoldSupply - totalAssetProviderBalance`**.
+- **`totalGoldSupply`**: µg on-chain; increases on PRD **mint** (`mintToPool`), decreases on **redeem** and **burn** (`burnFromPool`).
+- **`totalAssetProviderBalance`**: µg in the **Asset Provider buy pool** (unsold retail inventory). Increases on **mint** and **sell** returns; decreases on **buy** (`transferFromAPToUser`) and **burn**. Users do not receive gold on mint — mint loads the pool only.
+- **`circulatingSupply()`** = **`totalGoldSupply - totalAssetProviderBalance`** (= aggregate user holdings).
 
 **Buy** validates pool depth, eligibility, `minimumBuyGoldValueInUg`, per-tx / daily caps, and non-KYC fiat cap; then **credits the user in the same transaction** (no `executeRequest`).
 
-**Redeploy note:** this repo does not ship on-chain data migration. Deploy fresh proxies and re-seed pool inventory after unit changes.
+**Redeploy note:** this repo does not ship on-chain data migration. Deploy fresh proxies and fund the AP pool via **mint flow** before enabling retail buys.
 
 ### 1) Install Foundry and clone
 
@@ -107,19 +129,18 @@ forge script script/DeployAmoy.s.sol:DeployAmoy \
   --rpc-url $AMOY_RPC_URL \
   --broadcast \
   --slow \
-  --verify \
-  --gas-estimate-multiplier 130 \
-  --priority-gas-price 35gwei
+  --legacy \
+  --with-gas-price 35gwei
 ```
 
 Optional: append **`--verify`** only if **`POLYGONSCAN_API_KEY`** is set in `.env` (see §2).
 
-**Amoy gas tip:** If the RPC returns `transaction gas price below minimum` / `gas tip cap … minimum needed 25000000000`, the chain requires a **priority fee of at least ~25 gwei**. Set **`--priority-gas-price 35gwei`** (or higher if the network is busy). Without this, Forge can submit txs with a near‑zero tip and the node will reject them before anything is mined.
+**Amoy gas tip:** If broadcast fails with `max priorityfee per gas higher than max fee per gas`, **do not** use `--priority-gas-price` with EIP-1559 on this RPC — use **`--legacy --with-gas-price 35gwei`** as above. If the RPC returns `transaction gas price below minimum`, raise `--with-gas-price` (e.g. `40gwei` or `50gwei`).
 
 **If broadcast flakes:** Public RPCs often drop transactions from the mempool when the fee is tight or the endpoint is busy. You may see `dropped from the mempool` and, on Foundry 1.5.x, a crash (`attempt to divide by zero` in `broadcast.rs`) — that is a [known Foundry bug](https://github.com/foundry-rs/foundry/issues/13507) when receipts are missing, not a fault in this repo. Mitigations:
 
 1. **Send slowly** (one tx at a time, waits for receipts): add `--slow`.
-2. **Raise fees** so txs are not evicted: `--gas-estimate-multiplier 130` and **`--priority-gas-price 35gwei`** (raise if needed).
+2. **Use legacy gas** on Amoy: `--legacy --with-gas-price 35gwei` (raise if txs are dropped).
 3. **Resume** after a partial run: rerun the **same** command with `--resume` (keep the same RPC and script); Foundry replays pending txs from the local broadcast journal.
 4. **Try another RPC** (Alchemy, QuickNode, or a dedicated Amoy URL) if Infura keeps dropping txs.
 5. **Confirm on-chain** before copying addresses into `.env`: if the process crashed mid-broadcast, the addresses printed during simulation may not all exist on-chain — check Polygonscan for the deployer account’s recent contracts.
@@ -213,7 +234,11 @@ cast call $TIMELOCK_CONTROLLER "hasRole(bytes32,address)(bool)" $AT_ROLE $ROLE_A
 cast call $GOLD_NFT "hasRole(bytes32,address)(bool)" $AP_ROLE $ROLE_AP --rpc-url $AMOY_RPC_URL
 ```
 
-### 6) Onboard investors (`OnboardInvestors`)
+### 6) Onboard investors
+
+**Production (frontend):** users call **`registerUser(bytes32 userId, string kycRef)`** gasless on `WhitelistRegistry`; admin calls **`verifyKYC(wallet)`** from a secure backend. Full flow, contract addresses, and ops `cast` checks: **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)**.
+
+**Script back-office (`OnboardInvestors`):** admin-driven batch onboarding for test wallets.
 
 Set investor slots in `.env`:
 
@@ -226,23 +251,19 @@ Then run:
 
 ```shell
 source .env
-forge script script/OnboardInvestors.s.sol:OnboardInvestors --rpc-url $AMOY_RPC_URL --broadcast # First time run
-source .env
 forge script script/OnboardInvestors.s.sol:OnboardInvestors \
-  --rpc-url "$AMOY_RPC_URL" \
+  --rpc-url $AMOY_RPC_URL \
   --broadcast \
-#   --resume \
   --slow \
-  --gas-estimate-multiplier 130 \
-  --priority-gas-price 35gwei
-  # With slow resumed transactions for further runs
+  --legacy \
+  --with-gas-price 35gwei
 ```
 
 What this script does for each configured investor wallet:
 
-1. `WhitelistRegistry.registerUser(userId, wallet, kycRef)`
+1. `WhitelistRegistry.adminRegisterUser(userId, wallet, kycRef)` (if not already registered)
 2. `WhitelistRegistry.verifyKYC(wallet)` — controlled per investor by `INVESTOR_<n>_VERIFY_KYC` (if set). If unset, falls back to global `SKIP_KYC_VERIFY` (users skipped remain **Pending** and may **buy only** within `nonKycMaxBuyFiatAmount`)
-3. Grants **`USER_ROLE`** on both `WhitelistRegistry` and `TradeManager`
+3. Confirms **`USER_ROLE`** on both `WhitelistRegistry` and `TradeManager` (granted inside `adminRegisterUser`)
 
 `userId` is deterministic in this script: `keccak256("INVESTOR_<n>|<wallet>")`.
 
@@ -281,7 +302,12 @@ cast call $TRADE_MANAGER "hasRole(bytes32,address)(bool)" $USER_ROLE $INVESTOR_1
 
 # Optional: inspect profile snapshot (userId, wallet, KYC/wallet/user status, risk, kycRef, timestamp)
 cast call $WHITELIST_REGISTRY "getProfile(address)((bytes32,address,uint8,uint8,uint8,uint8,string,uint256))" $INVESTOR_1 --rpc-url $AMOY_RPC_URL
+
+# AP pool must be funded before buy (mint flow)
+cast call $GOLD_NFT "totalAssetProviderBalance()(uint256)" --rpc-url $AMOY_RPC_URL
 ```
+
+See **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)** for a full per-wallet “ready to buy” checklist and one-liner ops script.
 
 ### 7) Run operations (PRD flows)
 
@@ -293,8 +319,8 @@ Step 7 scripts remain deterministic direct role-by-role runners. For user gasles
 | **Buy** | Investor (`createBuyRequest(weightUg, fiat_value, payment_ref, txDetailsHash)`) | *none* | *Immediate* — request stored as **Executed**; `GoldNFT.transferFromAPToUser` in same call |
 | **Sell** | Investor (`createSellRequest`, escrow locks) | AP → AT | Admin execute |
 | **Redeem** | Investor (`createRedeemRequest`) | AP → VP → PAP → AT (VP step omitted if `vpRequiredForApprovals` is false) | Admin execute |
-| **Mint** | AP (`proposeMint`) | VP → AT (VP omitted if disabled) | Admin execute |
-| **Burn** | AP (`proposeBurn`) | VP → AT (VP omitted if disabled) | Admin execute (debits `vaultBookkeeping`) |
+| **Mint** | AP (`proposeMint`) | VP → AT (VP omitted if disabled) | Admin execute → **`mintToPool`** (AP buy inventory) |
+| **Burn** | AP (`proposeBurn`) | VP → AT (VP omitted if disabled) | Admin execute → **`burnFromPool`** (unsold AP inventory) |
 
 **Admin executor** holds `DEFAULT_ADMIN_ROLE` on `TradeManager` and calls `executeRequest(requestId)` for **non-Buy** flows after status reaches fully approved (`ATApproved`). **`executeRequest` reverts** if `requestType == Buy` (buys are never pending).
 
@@ -308,7 +334,7 @@ VP_REQUIRED=false forge script script/GovernanceAdminFlags.s.sol:GovernanceAdmin
 
 **`GovernanceConfig`**: `minimumBuyGoldValueInUg` (admin, **`setMinimumBuyGoldValueInUg`**) enforces a floor on buy size; set to **0** to disable the floor. **Amount caps** (`dailyBuyCap`, `maxAmountPerTx`, `minRedeemAmountUg`, etc.) are expressed in **µg** (`goldPrecision` default is **6** for gram display).
 
-**EIP-712 co-sign**: integrators hash with `TradeManager.hashCoSignBatch(requestId, nonce, deadline)` using domain `StoexGoldTrade` / version `1`, then call `executeWithCoSignatures` (see tests in `StoexPRD.t.sol`).
+**EIP-712 co-sign**: use `executeWithCoSignatures` with signatures following governance approval policy order (see tests in `StoexPRD.t.sol`).
 
 **Direct certificate mint**: AP calls `GoldNFT.mintCertificate(user)` when you want a certificate before any trade execution.
 
@@ -331,7 +357,7 @@ Optional inputs:
 - `BUY_PAYMENT_REF` (default `"BUY-REF-001"` as bytes32)
 - `BUY_TX_DETAILS_HASH` (optional `bytes32`) — bank/UPI audit hash
 
-Precondition: **`GoldNFT.totalAssetProviderBalance`** must cover the buy (fund pool via inventory ops / **`seedPoolInventory`** / sells returning to pool).
+Precondition: **`GoldNFT.totalAssetProviderBalance`** must cover the buy. Fund the pool via **mint flow** (`proposeMint` → execute) or sells returning gold to the pool.
 
 Run:
 
@@ -374,13 +400,11 @@ forge script script/RedeemFlow.s.sol:RedeemFlow --rpc-url $AMOY_RPC_URL --broadc
 
 #### Step 7.4 - Mint flow script (PRD order: AP -> VP -> AT -> EXECUTE)
 
-Required inputs:
-
-- `MINT_CREDIT_TO` (onboarded/eligible investor wallet to receive gold)
+Mint credits the **AP buy pool** (`totalAssetProviderBalance`), not a user wallet.
 
 Optional inputs:
 
-- `MINT_AMOUNT_UG` (default `1000000` = 1 g)
+- `MINT_AMOUNT_UG` (default `1000000` = 1 g; max per tx = `maxAmountPerTx`, default **1 kg**)
 - `MINT_VAULT_RECEIPT_ID` (default `"VAULT-RCPT-001"` as bytes32)
 - `MINT_BATCH_ID` (default `"BATCH-001"` as bytes32)
 - `MINT_PURITY` (default `999`)
@@ -392,12 +416,17 @@ Run:
 
 ```shell
 source .env
-forge script script/MintFlow.s.sol:MintFlow --rpc-url $AMOY_RPC_URL --broadcast --slow
+forge script script/MintFlow.s.sol:MintFlow \
+  --rpc-url $AMOY_RPC_URL \
+  --broadcast \
+  --slow \
+  --legacy \
+  --with-gas-price 35gwei
 ```
 
 #### Step 7.5 - Burn flow script (PRD order: AP -> VP -> AT -> EXECUTE)
 
-Precondition: `vaultBookkeeping` must be eligible and have enough µg, because burn debits that holder.
+Precondition: **`totalAssetProviderBalance`** must cover burn amount (burns unsold AP pool inventory).
 
 Optional inputs:
 
@@ -409,7 +438,12 @@ Run:
 
 ```shell
 source .env
-forge script script/BurnFlow.s.sol:BurnFlow --rpc-url $AMOY_RPC_URL --broadcast --slow
+forge script script/BurnFlow.s.sol:BurnFlow \
+  --rpc-url $AMOY_RPC_URL \
+  --broadcast \
+  --slow \
+  --legacy \
+  --with-gas-price 35gwei
 ```
 
 #### Step 7.6 - Verify operation result quickly

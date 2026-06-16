@@ -12,6 +12,7 @@ import {EscrowVault} from "../../src/EscrowVault.sol";
 import {TimelockController} from "../../src/TimelockController.sol";
 import {TradeManager} from "../../src/TradeManager.sol";
 import {StoexRoles} from "../../src/libraries/StoexRoles.sol";
+import {StoexTypes} from "../../src/libraries/StoexTypes.sol";
 
 /// @dev Shared UUPS deployment + wiring for STOEX Gold integration tests (PRD v2.0).
 abstract contract StoexFixture is Test {
@@ -117,6 +118,7 @@ abstract contract StoexFixture is Test {
         escrow.setTradeManager(tradeAddr);
         timelock.setTradeManager(tradeAddr);
         gold.grantRole(StoexRoles.TRADE_MANAGER_ROLE, tradeAddr);
+        registry.setTradeManager(tradeAddr);
 
         trade.grantRole(StoexRoles.AP_ROLE, ap);
         trade.grantRole(StoexRoles.VP_ROLE, vp);
@@ -135,20 +137,42 @@ abstract contract StoexFixture is Test {
         _registerVerifiedUser(user);
         _registerVerifiedUser(vaultBk);
 
-        gold.seedPoolInventory(100_000_000_000); // 100 kg in µg
+        _mintPoolInventory(10_000_000_000); // 10 kg in µg (chunked at maxAmountPerTx)
+    }
+
+    function _mintPoolInventory(uint256 amountUg) internal {
+        uint256 maxPerTx = gov.maxAmountPerTx();
+        StoexTypes.MintLotMeta memory lot = StoexTypes.MintLotMeta({
+            vaultReceiptId: bytes32(uint256(1)),
+            batchId: bytes32(uint256(2)),
+            purity: 9999,
+            depositTimestamp: block.timestamp,
+            apId: ap,
+            vpId: vp,
+            lockUntilTs: 0,
+            amountUg: 0
+        });
+        uint256 remaining = amountUg;
+        while (remaining > 0) {
+            uint256 chunk = remaining > maxPerTx ? maxPerTx : remaining;
+            vm.prank(ap);
+            uint256 rid = trade.proposeMint(chunk, bytes32(uint256(3)), lot);
+            vm.prank(vp);
+            trade.approveRequest(rid);
+            vm.prank(at);
+            trade.approveRequest(rid);
+            trade.executeRequest(rid);
+            remaining -= chunk;
+        }
     }
 
     function _registerVerifiedUser(address u) internal {
-        registry.registerUser(keccak256(abi.encodePacked("u", u)), u, "kyc");
+        registry.adminRegisterUser(keccak256(abi.encodePacked("u", u)), u, "kyc");
         registry.verifyKYC(u);
-        registry.grantRole(StoexRoles.USER_ROLE, u);
-        trade.grantRole(StoexRoles.USER_ROLE, u);
     }
 
     function _registerPendingKycUser(address u) internal {
-        registry.registerUser(keccak256(abi.encodePacked("p", u)), u, "kyc");
-        registry.grantRole(StoexRoles.USER_ROLE, u);
-        trade.grantRole(StoexRoles.USER_ROLE, u);
+        registry.adminRegisterUser(keccak256(abi.encodePacked("p", u)), u, "kyc");
     }
 
     /// @dev Buy completes atomically in `createBuyRequest` (microgram amounts). `fiat_value` is test-scaled with amountUg.

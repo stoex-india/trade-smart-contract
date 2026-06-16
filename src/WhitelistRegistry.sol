@@ -4,7 +4,8 @@ pragma solidity ^0.8.24;
 /// @title STOEX Gold — WhitelistRegistry
 /// @notice On-chain **KYC / wallet / compliance** state. `isEligible` is the single gate used by `GoldNFT` and user-facing `TradeManager` flows.
 /// @dev UUPS upgradeable. Important roles (same `AccessControl` pattern as PRD):
-/// - `DEFAULT_ADMIN_ROLE`: onboard users, KYC, wallet risk, suspend/blacklist, grant `USER_ROLE` for wallet-change requests.
+/// - `DEFAULT_ADMIN_ROLE`: admin-register users, KYC, wallet risk, suspend/blacklist; grant `USER_ROLE` for wallet-change requests.
+/// - Self-service: anyone may `registerUser` (ERC-2771 `_msgSender()`); admin may `adminRegisterUser` for back-office onboarding.
 /// - `USER_ROLE`: investor may `requestWalletChange` for their own wallet.
 /// - `AT_ROLE`: co-approve wallet migration with admin; `unsuspendWallet` override.
 /// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
@@ -17,6 +18,7 @@ import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Cont
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
+import {ITradeManagerOnboarding} from "./interfaces/ITradeManagerOnboarding.sol";
 
 contract WhitelistRegistry is
     Initializable,
@@ -27,6 +29,7 @@ contract WhitelistRegistry is
 {
     uint8 public version;
     address private _trustedForwarderValue;
+    ITradeManagerOnboarding public tradeManager;
 
     mapping(address => StoexTypes.UserProfile) private _profiles;
     mapping(address => bool) private _registered;
@@ -73,9 +76,30 @@ contract WhitelistRegistry is
         return _trustedForwarderValue;
     }
 
-    function registerUser(bytes32 userId, address wallet, string calldata kycRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @notice One-time link to `TradeManager` so self-registration can grant trade `USER_ROLE`.
+    function setTradeManager(address tradeManager_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (tradeManager_ == address(0)) revert ZeroAddress();
+        tradeManager = ITradeManagerOnboarding(tradeManager_);
+    }
+
+    /// @notice Permissionless self-registration. `wallet` is `_msgSender()` (supports ERC-2771 gasless).
+    function registerUser(bytes32 userId, string calldata kycRef) external {
+        _registerUser(_msgSender(), userId, kycRef);
+    }
+
+    /// @notice Admin back-office registration for any wallet (admin panel).
+    function adminRegisterUser(bytes32 userId, address wallet, string calldata kycRef)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        _registerUser(wallet, userId, kycRef);
+    }
+
+    function _registerUser(address wallet, bytes32 userId, string calldata kycRef) private {
         if (wallet == address(0)) revert ZeroAddress();
         if (_registered[wallet]) revert AlreadyRegistered();
+        if (address(tradeManager) == address(0)) revert TradeManagerNotSet();
+
         _registered[wallet] = true;
         _profiles[wallet] = StoexTypes.UserProfile({
             userId: userId,
@@ -87,6 +111,12 @@ contract WhitelistRegistry is
             kycRef: kycRef,
             registeredAt: block.timestamp
         });
+
+        if (!hasRole(StoexRoles.USER_ROLE, wallet)) {
+            _grantRole(StoexRoles.USER_ROLE, wallet);
+        }
+        tradeManager.grantUserRoleFromRegistry(wallet);
+
         emit UserRegistered(wallet, userId);
     }
 
@@ -220,6 +250,11 @@ contract WhitelistRegistry is
         return _profiles[wallet];
     }
 
+    /// @inheritdoc IWhitelistRegistry
+    function hasUserRole(address wallet) external view override returns (bool) {
+        return hasRole(StoexRoles.USER_ROLE, wallet);
+    }
+
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     function _contextSuffixLength()
@@ -241,6 +276,7 @@ contract WhitelistRegistry is
     }
 
     error ZeroAddress();
+    error TradeManagerNotSet();
     error AlreadyRegistered();
     error NotRegistered();
     error NotWalletOwner();

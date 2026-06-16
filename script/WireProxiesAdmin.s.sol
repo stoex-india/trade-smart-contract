@@ -7,6 +7,7 @@ import {TradeManager} from "../src/TradeManager.sol";
 import {EscrowVault} from "../src/EscrowVault.sol";
 import {TimelockController} from "../src/TimelockController.sol";
 import {GoldNFT} from "../src/GoldNFT.sol";
+import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
 import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 
 /// @title WireProxiesAdmin
@@ -24,6 +25,7 @@ contract WireProxiesAdmin is Script {
         address escrowAddr = vm.envAddress("ESCROW_VAULT");
         address timelockAddr = vm.envAddress("TIMELOCK_CONTROLLER");
         address goldAddr = vm.envAddress("GOLD_NFT");
+        address registryAddr = vm.envAddress("WHITELIST_REGISTRY");
 
         address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", admin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
@@ -37,6 +39,7 @@ contract WireProxiesAdmin is Script {
         EscrowVault(escrowAddr).setTradeManager(tradeAddr);
         TimelockController(timelockAddr).setTradeManager(tradeAddr);
         GoldNFT(goldAddr).grantRole(StoexRoles.TRADE_MANAGER_ROLE, tradeAddr);
+        WhitelistRegistry(registryAddr).setTradeManager(tradeAddr);
 
         vm.stopBroadcast();
 

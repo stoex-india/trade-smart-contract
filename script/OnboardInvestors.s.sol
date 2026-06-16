@@ -49,10 +49,10 @@ contract OnboardInvestors is Script {
 
             StoexTypes.UserProfile memory profile = registry.getProfile(investor);
             if (profile.registeredAt == 0) {
-                registry.registerUser(userId, investor, kycRef);
+                registry.adminRegisterUser(userId, investor, kycRef);
                 console2.log("Registered investor", investor);
             } else {
-                console2.log("registerUser skipped/already set", investor);
+                console2.log("adminRegisterUser skipped/already set", investor);
             }
 
             string memory verifyKycKey = string.concat(investorKey, "_VERIFY_KYC");
@@ -69,17 +69,15 @@ contract OnboardInvestors is Script {
             }
 
             if (!registry.hasRole(StoexRoles.USER_ROLE, investor)) {
-                registry.grantRole(StoexRoles.USER_ROLE, investor);
-                console2.log("Granted USER_ROLE on registry", investor);
+                console2.log("WARN: USER_ROLE missing on registry after adminRegisterUser", investor);
             } else {
-                console2.log("registry USER_ROLE already granted", investor);
+                console2.log("registry USER_ROLE granted", investor);
             }
 
             if (!trade.hasRole(StoexRoles.USER_ROLE, investor)) {
-                trade.grantRole(StoexRoles.USER_ROLE, investor);
-                console2.log("Granted USER_ROLE on trade manager", investor);
+                console2.log("WARN: USER_ROLE missing on trade after adminRegisterUser", investor);
             } else {
-                console2.log("trade USER_ROLE already granted", investor);
+                console2.log("trade USER_ROLE granted", investor);
             }
         }
 

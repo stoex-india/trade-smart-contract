@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {StoexFixture} from "./helpers/StoexFixture.sol";
 import {StoexTypes} from "../src/libraries/StoexTypes.sol";
+import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 import {GoldNFT} from "../src/GoldNFT.sol";
 import {TimelockController} from "../src/TimelockController.sol";
@@ -52,6 +53,7 @@ contract StoexPRDTest is StoexFixture {
     }
 
     function test_mint_flow_VP_then_AT() public {
+        uint256 poolBefore = gold.totalAssetProviderBalance();
         StoexTypes.MintLotMeta memory lot = StoexTypes.MintLotMeta({
             vaultReceiptId: bytes32(uint256(7)),
             batchId: bytes32(uint256(8)),
@@ -63,17 +65,20 @@ contract StoexPRDTest is StoexFixture {
             amountUg: 0
         });
         vm.prank(ap);
-        uint256 rid = trade.proposeMint(80 * UG_PER_G, user, bytes32(uint256(9)), lot);
+        uint256 rid = trade.proposeMint(80 * UG_PER_G, bytes32(uint256(9)), lot);
         vm.prank(vp);
         trade.approveRequest(rid);
         vm.prank(at);
         trade.approveRequest(rid);
         trade.executeRequest(rid);
-        assertEq(gold.userHolding(user), 80 * UG_PER_G);
+        assertEq(gold.userHolding(user), 0);
+        assertEq(gold.totalAssetProviderBalance(), poolBefore + 80 * UG_PER_G);
+        assertEq(gold.totalGoldSupply(), poolBefore + 80 * UG_PER_G + gold.circulatingSupply());
     }
 
-    function test_burn_flow_debits_vault_bookkeeping() public {
-        _executeBuy(vaultBk, 1000 * UG_PER_G);
+    function test_burn_flow_debits_ap_pool() public {
+        uint256 poolBefore = gold.totalAssetProviderBalance();
+        uint256 supplyBefore = gold.totalGoldSupply();
         vm.prank(ap);
         uint256 rid = trade.proposeBurn(100 * UG_PER_G, bytes32(uint256(3)), "adjustment");
         vm.prank(vp);
@@ -81,7 +86,8 @@ contract StoexPRDTest is StoexFixture {
         vm.prank(at);
         trade.approveRequest(rid);
         trade.executeRequest(rid);
-        assertEq(gold.userHolding(vaultBk), 900 * UG_PER_G);
+        assertEq(gold.totalAssetProviderBalance(), poolBefore - 100 * UG_PER_G);
+        assertEq(gold.totalGoldSupply(), supplyBefore - 100 * UG_PER_G);
     }
 
     function test_reject_sell_unlocks_escrow() public {
@@ -170,9 +176,19 @@ contract StoexPRDTest is StoexFixture {
         assertEq(gov.minRedeemAmountUg(), 5 * UG_PER_G);
     }
 
+    function test_self_register_grants_user_role() public {
+        address u = makeAddr("selfReg");
+        vm.prank(u);
+        registry.registerUser(keccak256("self"), "kyc-ref");
+        assertTrue(registry.hasRole(StoexRoles.USER_ROLE, u));
+        assertTrue(trade.hasRole(StoexRoles.USER_ROLE, u));
+        assertTrue(registry.isEligibleForNonKycUser(u));
+    }
+
     function test_whitelist_not_eligible_until_kyc_verified() public {
         address u = makeAddr("fresh");
-        registry.registerUser(keccak256("x"), u, "r");
+        vm.prank(u);
+        registry.registerUser(keccak256("x"), "r");
         assertFalse(registry.isEligible(u));
         assertTrue(registry.isEligibleForNonKycUser(u));
         registry.verifyKYC(u);
@@ -229,11 +245,12 @@ contract StoexPRDTest is StoexFixture {
             amountUg: 0
         });
         vm.prank(ap);
-        uint256 rid = trade.proposeMint(80 * UG_PER_G, user, bytes32(uint256(9)), lot);
+        uint256 rid = trade.proposeMint(80 * UG_PER_G, bytes32(uint256(9)), lot);
         vm.prank(at);
         trade.approveRequest(rid);
         trade.executeRequest(rid);
-        assertEq(gold.userHolding(user), 80 * UG_PER_G);
+        assertEq(gold.userHolding(user), 0);
+        assertEq(gold.totalAssetProviderBalance(), 10_000_000_000 + 80 * UG_PER_G);
     }
 
     function test_whitelist_wallet_change_after_dual_approval() public {
@@ -291,28 +308,27 @@ contract StoexPRDTest is StoexFixture {
         gov.setDefaultTimelockDuration(3 days);
         StoexTypes.MintLotMeta memory lot;
         vm.prank(ap);
-        uint256 rid = trade.proposeMint(30 * UG_PER_G, user, bytes32(uint256(1)), lot);
+        uint256 rid = trade.proposeMint(30 * UG_PER_G, bytes32(uint256(1)), lot);
         vm.prank(vp);
         trade.approveRequest(rid);
         vm.prank(at);
         trade.approveRequest(rid);
         trade.executeRequest(rid);
-        uint256[] memory lots = gold.getUserLotIds(user);
+        uint256[] memory lots = gold.getPoolLotIds();
         uint256 exp = timelock.getLotTimelockExpiry(lots[lots.length - 1]);
         assertGt(exp, block.timestamp);
     }
 
-    function test_getUserRequests_returns_rows() public {
+    function test_getRequest_after_buy() public {
         vm.prank(user);
-        trade.createBuyRequest(10 * UG_PER_G, 10 * UG_PER_G * 100, bytes32(uint256(1)), bytes32(0));
-        (uint256[] memory ids,) = trade.getUserRequests(user, 0, 10);
-        assertEq(ids.length, 1);
-        assertEq(trade.getRequest(ids[0]).amountUg, 10 * UG_PER_G);
+        uint256 rid = trade.createBuyRequest(10 * UG_PER_G, 10 * UG_PER_G * 100, bytes32(uint256(1)), bytes32(0));
+        assertEq(trade.getRequest(rid).amountUg, 10 * UG_PER_G);
+        assertEq(uint256(trade.getRequestStatus(rid)), uint256(StoexTypes.RequestStatus.Executed));
     }
 
     function test_AP_can_mint_certificate_directly() public {
         address fresh = makeAddr("freshCert");
-        registry.registerUser(keccak256("c"), fresh, "k");
+        registry.adminRegisterUser(keccak256("c"), fresh, "k");
         registry.verifyKYC(fresh);
         vm.prank(ap);
         gold.mintCertificate(fresh);
