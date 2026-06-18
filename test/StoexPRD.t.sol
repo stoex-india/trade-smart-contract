@@ -24,12 +24,9 @@ contract StoexPRDTest is StoexFixture {
     function test_sell_flow_escrow_release_and_decrease() public {
         _executeBuy(user, 500 * UG_PER_G);
         uint256 sellG = 200 * UG_PER_G;
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(sellG, bytes32(uint256(1)));
-        vm.prank(ap);
-        trade.approveRequest(rid);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _sellRequest(user, sellG, bytes32(uint256(1)));
+        _approveRequest(ap, rid);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         assertEq(gold.userHolding(user), 300 * UG_PER_G);
         assertEq(escrow.getLockedAmount(user), 0);
@@ -38,16 +35,11 @@ contract StoexPRDTest is StoexFixture {
     function test_redeem_flow_four_party_approval() public {
         _executeBuy(user, 500 * UG_PER_G);
         uint256 redeemG = 50 * UG_PER_G;
-        vm.prank(user);
-        uint256 rid = trade.createRedeemRequest(redeemG, bytes32(uint256(2)));
-        vm.prank(ap);
-        trade.approveRequest(rid);
-        vm.prank(vp);
-        trade.approveRequest(rid);
-        vm.prank(pap);
-        trade.approveRequest(rid);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _redeemRequest(user, redeemG, bytes32(uint256(2)));
+        _approveRequest(ap, rid);
+        _approveRequest(vp, rid);
+        _approveRequest(pap, rid);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         assertEq(gold.userHolding(user), 450 * UG_PER_G);
     }
@@ -64,12 +56,9 @@ contract StoexPRDTest is StoexFixture {
             lockUntilTs: 0,
             amountUg: 0
         });
-        vm.prank(ap);
-        uint256 rid = trade.proposeMint(80 * UG_PER_G, bytes32(uint256(9)), lot);
-        vm.prank(vp);
-        trade.approveRequest(rid);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _proposeMint(ap, 80 * UG_PER_G, bytes32(uint256(9)), lot);
+        _approveRequest(vp, rid);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         assertEq(gold.userHolding(user), 0);
         assertEq(gold.totalAssetProviderBalance(), poolBefore + 80 * UG_PER_G);
@@ -79,12 +68,9 @@ contract StoexPRDTest is StoexFixture {
     function test_burn_flow_debits_ap_pool() public {
         uint256 poolBefore = gold.totalAssetProviderBalance();
         uint256 supplyBefore = gold.totalGoldSupply();
-        vm.prank(ap);
-        uint256 rid = trade.proposeBurn(100 * UG_PER_G, bytes32(uint256(3)), "adjustment");
-        vm.prank(vp);
-        trade.approveRequest(rid);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _proposeBurn(ap, 100 * UG_PER_G, bytes32(uint256(3)), "adjustment");
+        _approveRequest(vp, rid);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         assertEq(gold.totalAssetProviderBalance(), poolBefore - 100 * UG_PER_G);
         assertEq(gold.totalGoldSupply(), supplyBefore - 100 * UG_PER_G);
@@ -92,28 +78,23 @@ contract StoexPRDTest is StoexFixture {
 
     function test_reject_sell_unlocks_escrow() public {
         _executeBuy(user, 300 * UG_PER_G);
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(100 * UG_PER_G, bytes32(uint256(4)));
-        vm.prank(ap);
-        trade.rejectRequest(rid, "no");
+        uint256 rid = _sellRequest(user, 100 * UG_PER_G, bytes32(uint256(4)));
+        _rejectRequest(ap, rid, "no");
         (,,,, bool released) = escrow.getEscrowDetails(rid);
         assertTrue(released);
     }
 
     function test_cancel_sell_unlocks_escrow() public {
         _executeBuy(user, 300 * UG_PER_G);
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(100 * UG_PER_G, bytes32(uint256(5)));
-        vm.prank(user);
-        trade.cancelRequest(rid);
+        uint256 rid = _sellRequest(user, 100 * UG_PER_G, bytes32(uint256(5)));
+        _cancelRequest(user, rid);
         (,,,, bool released) = escrow.getEscrowDetails(rid);
         assertTrue(released);
     }
 
     function test_expire_unlocks_escrow() public {
         _executeBuy(user, 300 * UG_PER_G);
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(100 * UG_PER_G, bytes32(uint256(6)));
+        uint256 rid = _sellRequest(user, 100 * UG_PER_G, bytes32(uint256(6)));
         vm.warp(block.timestamp + gov.requestExpiryDuration() + 1);
         trade.expireRequest(rid);
         assertEq(uint256(trade.getRequestStatus(rid)), uint256(StoexTypes.RequestStatus.Expired));
@@ -123,18 +104,18 @@ contract StoexPRDTest is StoexFixture {
         vm.prank(at);
         gov.setDailyCap(StoexTypes.RequestType.Buy, 150 * UG_PER_G);
         _executeBuy(user, 100 * UG_PER_G);
-        vm.prank(user);
+        vm.prank(forwarder);
         vm.expectRevert(TradeManager.CapBuy.selector);
-        trade.createBuyRequest(100 * UG_PER_G, 100 * UG_PER_G * 100, bytes32(uint256(2)), bytes32(0));
+        trade.createBuyRequestFor(user, 100 * UG_PER_G, 100 * UG_PER_G * 100, bytes32(uint256(2)), bytes32(0));
     }
 
     function test_timelock_blocks_sell_until_expiry() public {
         _executeBuy(user, 200 * UG_PER_G);
         vm.prank(ap);
         timelock.setWalletTimelock(user, block.timestamp + 5 days);
-        vm.prank(user);
+        vm.prank(forwarder);
         vm.expectRevert(TradeManager.Timelocked.selector);
-        trade.createSellRequest(50 * UG_PER_G, bytes32(uint256(1)));
+        trade.createSellRequestFor(user, 50 * UG_PER_G, bytes32(uint256(1)));
     }
 
     function test_timelock_trustee_override_restores_sell() public {
@@ -143,31 +124,28 @@ contract StoexPRDTest is StoexFixture {
         timelock.setWalletTimelock(user, block.timestamp + 5 days);
         vm.prank(at);
         timelock.overrideTimelock(user, 999);
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(50 * UG_PER_G, bytes32(uint256(1)));
+        uint256 rid = _sellRequest(user, 50 * UG_PER_G, bytes32(uint256(1)));
         assertTrue(rid > 0);
     }
 
     function test_buy_auto_executes_in_create_without_admin_execute() public {
         uint256 amountUg = 40 * UG_PER_G;
-        vm.prank(user);
-        uint256 rid = trade.createBuyRequest(amountUg, amountUg * 100, bytes32(uint256(99)), bytes32(0));
+        uint256 rid = _executeBuy(user, amountUg);
         assertEq(uint256(trade.getRequestStatus(rid)), uint256(StoexTypes.RequestStatus.Executed));
         assertEq(gold.userHolding(user), amountUg);
     }
 
     function test_execute_request_reverts_for_buy_automation_path() public {
-        vm.prank(user);
-        uint256 rid = trade.createBuyRequest(5 * UG_PER_G, 500, bytes32(uint256(7)), bytes32(0));
+        uint256 rid = _executeBuy(user, 5 * UG_PER_G);
         vm.expectRevert(TradeManager.BuyUsesAutoExecution.selector);
         trade.executeRequest(rid);
     }
 
     function test_minimum_buy_ug_enforced() public {
         gov.setMinimumBuyGoldValueInUg(60_000_000); // 60 g
-        vm.prank(user);
+        vm.prank(forwarder);
         vm.expectRevert(TradeManager.BelowMinBuyGold.selector);
-        trade.createBuyRequest(50_000_000, 50_000_000 * 100, bytes32(uint256(1)), bytes32(0)); // 50 g
+        trade.createBuyRequestFor(user, 50_000_000, 50_000_000 * 100, bytes32(uint256(1)), bytes32(0)); // 50 g
     }
 
     function test_governance_AT_updates_min_redeem() public {
@@ -178,8 +156,8 @@ contract StoexPRDTest is StoexFixture {
 
     function test_self_register_grants_user_role() public {
         address u = makeAddr("selfReg");
-        vm.prank(u);
-        registry.registerUser(keccak256("self"), "kyc-ref");
+        vm.prank(forwarder);
+        registry.registerUserFor(u, keccak256("self"), "kyc-ref");
         assertTrue(registry.hasRole(StoexRoles.USER_ROLE, u));
         assertTrue(trade.hasRole(StoexRoles.USER_ROLE, u));
         assertTrue(registry.isEligibleForNonKycUser(u));
@@ -187,8 +165,8 @@ contract StoexPRDTest is StoexFixture {
 
     function test_whitelist_not_eligible_until_kyc_verified() public {
         address u = makeAddr("fresh");
-        vm.prank(u);
-        registry.registerUser(keccak256("x"), "r");
+        vm.prank(forwarder);
+        registry.registerUserFor(u, keccak256("x"), "r");
         assertFalse(registry.isEligible(u));
         assertTrue(registry.isEligibleForNonKycUser(u));
         registry.verifyKYC(u);
@@ -202,8 +180,8 @@ contract StoexPRDTest is StoexFixture {
         vm.prank(at);
         gov.setNonKycMaxBuyFiatAmount(2_000_000);
         uint256 amountUg = 100 * UG_PER_G;
-        vm.prank(u);
-        trade.createBuyRequest(amountUg, 500_000, bytes32(uint256(42)), bytes32(0));
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(u, amountUg, 500_000, bytes32(uint256(42)), bytes32(0));
         assertEq(gold.userHolding(u), amountUg);
         assertTrue(gold.tokenIdByBeneficiary(u) != 0);
     }
@@ -213,11 +191,11 @@ contract StoexPRDTest is StoexFixture {
         _registerPendingKycUser(u);
         vm.prank(at);
         gov.setNonKycMaxBuyFiatAmount(200_000);
-        vm.prank(u);
-        trade.createBuyRequest(100 * UG_PER_G, 100_000, bytes32(uint256(1)), bytes32(0));
-        vm.prank(u);
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(u, 100 * UG_PER_G, 100_000, bytes32(uint256(1)), bytes32(0));
+        vm.prank(forwarder);
         vm.expectRevert(TradeManager.CapBuyNonKyc.selector);
-        trade.createBuyRequest(100 * UG_PER_G, 120_000, bytes32(uint256(2)), bytes32(0));
+        trade.createBuyRequestFor(u, 100 * UG_PER_G, 120_000, bytes32(uint256(2)), bytes32(0));
     }
 
     function test_pending_user_cannot_sell() public {
@@ -225,11 +203,11 @@ contract StoexPRDTest is StoexFixture {
         _registerPendingKycUser(u);
         vm.prank(at);
         gov.setNonKycMaxBuyFiatAmount(5_000_000);
-        vm.prank(u);
-        trade.createBuyRequest(200 * UG_PER_G, 1_000_000, bytes32(uint256(1)), bytes32(0));
-        vm.prank(u);
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(u, 200 * UG_PER_G, 1_000_000, bytes32(uint256(1)), bytes32(0));
+        vm.prank(forwarder);
         vm.expectRevert(TradeManager.NotEligible.selector);
-        trade.createSellRequest(50 * UG_PER_G, bytes32(uint256(3)));
+        trade.createSellRequestFor(u, 50 * UG_PER_G, bytes32(uint256(3)));
     }
 
     function test_mint_flow_without_vp_when_disabled() public {
@@ -244,10 +222,8 @@ contract StoexPRDTest is StoexFixture {
             lockUntilTs: 0,
             amountUg: 0
         });
-        vm.prank(ap);
-        uint256 rid = trade.proposeMint(80 * UG_PER_G, bytes32(uint256(9)), lot);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _proposeMint(ap, 80 * UG_PER_G, bytes32(uint256(9)), lot);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         assertEq(gold.userHolding(user), 0);
         assertEq(gold.totalAssetProviderBalance(), 10_000_000_000 + 80 * UG_PER_G);
@@ -286,18 +262,16 @@ contract StoexPRDTest is StoexFixture {
 
     function test_gold_pause_blocks_subsequent_buy() public {
         uint256 first = 10 * UG_PER_G;
-        vm.prank(user);
-        trade.createBuyRequest(first, first * 100, bytes32(uint256(1)), bytes32(0));
+        _executeBuy(user, first);
         gold.pause();
-        vm.prank(user);
+        vm.prank(forwarder);
         vm.expectRevert();
-        trade.createBuyRequest(10 * UG_PER_G, 10 * UG_PER_G * 100, bytes32(uint256(3)), bytes32(0));
+        trade.createBuyRequestFor(user, 10 * UG_PER_G, 10 * UG_PER_G * 100, bytes32(uint256(3)), bytes32(0));
     }
 
     function test_escrow_reduces_available_while_locked() public {
         _executeBuy(user, 200 * UG_PER_G);
-        vm.prank(user);
-        uint256 rid = trade.createSellRequest(120 * UG_PER_G, bytes32(uint256(1)));
+        uint256 rid = _sellRequest(user, 120 * UG_PER_G, bytes32(uint256(1)));
         assertEq(escrow.getAvailableBalance(user), 80 * UG_PER_G);
         assertEq(escrow.getLockedAmount(user), 120 * UG_PER_G);
         rid;
@@ -307,12 +281,9 @@ contract StoexPRDTest is StoexFixture {
         vm.prank(at);
         gov.setDefaultTimelockDuration(3 days);
         StoexTypes.MintLotMeta memory lot;
-        vm.prank(ap);
-        uint256 rid = trade.proposeMint(30 * UG_PER_G, bytes32(uint256(1)), lot);
-        vm.prank(vp);
-        trade.approveRequest(rid);
-        vm.prank(at);
-        trade.approveRequest(rid);
+        uint256 rid = _proposeMint(ap, 30 * UG_PER_G, bytes32(uint256(1)), lot);
+        _approveRequest(vp, rid);
+        _approveRequest(at, rid);
         trade.executeRequest(rid);
         uint256[] memory lots = gold.getPoolLotIds();
         uint256 exp = timelock.getLotTimelockExpiry(lots[lots.length - 1]);
@@ -320,8 +291,7 @@ contract StoexPRDTest is StoexFixture {
     }
 
     function test_getRequest_after_buy() public {
-        vm.prank(user);
-        uint256 rid = trade.createBuyRequest(10 * UG_PER_G, 10 * UG_PER_G * 100, bytes32(uint256(1)), bytes32(0));
+        uint256 rid = _executeBuy(user, 10 * UG_PER_G);
         assertEq(trade.getRequest(rid).amountUg, 10 * UG_PER_G);
         assertEq(uint256(trade.getRequestStatus(rid)), uint256(StoexTypes.RequestStatus.Executed));
     }

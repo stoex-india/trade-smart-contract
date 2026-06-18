@@ -45,8 +45,13 @@
   },
   {
     "type": "function",
-    "name": "approveRequest",
+    "name": "approveRequestFor",
     "inputs": [
+      {
+        "name": "approver",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "requestId",
         "type": "uint256",
@@ -71,8 +76,13 @@
   },
   {
     "type": "function",
-    "name": "cancelRequest",
+    "name": "cancelRequestFor",
     "inputs": [
+      {
+        "name": "initiator",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "requestId",
         "type": "uint256",
@@ -103,8 +113,13 @@
   },
   {
     "type": "function",
-    "name": "createBuyRequest",
+    "name": "createBuyRequestFor",
     "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "weightUg",
         "type": "uint256",
@@ -137,8 +152,13 @@
   },
   {
     "type": "function",
-    "name": "createRedeemRequest",
+    "name": "createRedeemRequestFor",
     "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -161,8 +181,13 @@
   },
   {
     "type": "function",
-    "name": "createSellRequest",
+    "name": "createSellRequestFor",
     "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -608,25 +633,6 @@
   },
   {
     "type": "function",
-    "name": "isTrustedForwarder",
-    "inputs": [
-      {
-        "name": "forwarder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "nextRequestId",
     "inputs": [],
     "outputs": [
@@ -660,8 +666,13 @@
   },
   {
     "type": "function",
-    "name": "proposeBurn",
+    "name": "proposeBurnFor",
     "inputs": [
+      {
+        "name": "ap",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -689,8 +700,13 @@
   },
   {
     "type": "function",
-    "name": "proposeMint",
+    "name": "proposeMintFor",
     "inputs": [
+      {
+        "name": "ap",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -786,8 +802,13 @@
   },
   {
     "type": "function",
-    "name": "rejectRequest",
+    "name": "rejectRequestFor",
     "inputs": [
+      {
+        "name": "rejector",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "requestId",
         "type": "uint256",
@@ -1577,6 +1598,16 @@
   {
     "type": "error",
     "name": "NotInitiator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotTrustedForwarder",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotUser",
     "inputs": []
   },
   {

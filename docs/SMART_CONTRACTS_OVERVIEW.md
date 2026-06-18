@@ -28,7 +28,7 @@ Most operational writes are role-gated via AccessControl roles defined in `Stoex
 
 ## `TradeManager`
 
-Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuyRequest`; other request types use propose → approvals → execution.
+Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuyRequestFor`; other request types use propose → approvals → execution.
 
 ### Key Read Endpoints
 
@@ -44,12 +44,14 @@ Purpose: trade request lifecycle controller. Buy is auto-finalized in `createBuy
 - `setTrustedForwarder(address)`: admin updates trusted forwarder.
 - `setRoutingAddresses(address assetProviderPayout,address redeemSink,address vaultBookkeeping)`: one-time routing setup.
 - `pause()/unpause()`: admin pause controls.
-- `createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)`: user buy (auto-exec).
-- `createSellRequest(uint256 amountUg,bytes32 payoutRefId)`: user sell request creation.
+- `createBuyRequestFor(address user, ...)`: gasless user buy (auto-exec).
+- `createSellRequestFor(address user, ...)`: gasless user sell request.
+- `createRedeemRequestFor(address user, ...)`: gasless user redeem request.
+- `proposeMintFor(address ap, ...)`, `proposeBurnFor(address ap, ...)`: gasless AP proposals.
+- `approveRequestFor(address approver, uint256 requestId)`: gasless role-based approvals.
 - `createRedeemRequest(uint256 amountUg,bytes32 deliveryRefId)`: user redeem request creation.
 - `proposeMint(uint256 amountUg,address creditTo,bytes32 vaultReceiptId,MintLotMeta lot)`: AP mint proposal.
 - `proposeBurn(uint256 amountUg,bytes32 referenceId,string reason_)`: AP burn proposal.
-- `approveRequest(uint256 requestId)`: role-based approvals.
 - `rejectRequest(uint256 requestId,string reason_)`: reject + optional escrow unlock.
 - `cancelRequest(uint256 requestId)`: initiator cancel while pending.
 - `expireRequest(uint256 requestId)`: mark expired after TTL.
@@ -142,7 +144,8 @@ Purpose: identity/KYC/eligibility/risk management for wallets.
 ### Key Write Endpoints
 
 - `setTrustedForwarder(address)`: admin.
-- `registerUser(bytes32 userId,address wallet,string kycRef)`: admin register profile.
+- `registerUserFor(address wallet, bytes32 userId, string kycRef)`: gasless self-registration via relayer.
+- `adminRegisterUser(bytes32 userId, address wallet, string kycRef)`: admin back-office registration.
 - `verifyKYC(address wallet)`: admin.
 - `rejectKYC(address wallet)`: admin.
 - `whitelistWallet(address wallet)`: admin.

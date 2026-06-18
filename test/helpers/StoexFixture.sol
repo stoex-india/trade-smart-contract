@@ -155,12 +155,12 @@ abstract contract StoexFixture is Test {
         uint256 remaining = amountUg;
         while (remaining > 0) {
             uint256 chunk = remaining > maxPerTx ? maxPerTx : remaining;
-            vm.prank(ap);
-            uint256 rid = trade.proposeMint(chunk, bytes32(uint256(3)), lot);
-            vm.prank(vp);
-            trade.approveRequest(rid);
-            vm.prank(at);
-            trade.approveRequest(rid);
+            vm.prank(forwarder);
+            uint256 rid = trade.proposeMintFor(ap, chunk, bytes32(uint256(3)), lot);
+            vm.prank(forwarder);
+            trade.approveRequestFor(vp, rid);
+            vm.prank(forwarder);
+            trade.approveRequestFor(at, rid);
             trade.executeRequest(rid);
             remaining -= chunk;
         }
@@ -175,10 +175,53 @@ abstract contract StoexFixture is Test {
         registry.adminRegisterUser(keccak256(abi.encodePacked("p", u)), u, "kyc");
     }
 
-    /// @dev Buy completes atomically in `createBuyRequest` (microgram amounts). `fiat_value` is test-scaled with amountUg.
+    /// @dev Buy completes atomically in `createBuyRequestFor` (microgram amounts). `fiat_value` is test-scaled with amountUg.
     function _executeBuy(address investor, uint256 amountUg) internal returns (uint256 requestId) {
-        vm.prank(investor);
-        requestId = trade.createBuyRequest(amountUg, _defaultFiat(amountUg), bytes32(uint256(1)), bytes32(uint256(2)));
+        vm.prank(forwarder);
+        requestId = trade.createBuyRequestFor(
+            investor, amountUg, _defaultFiat(amountUg), bytes32(uint256(1)), bytes32(uint256(2))
+        );
+    }
+
+    function _sellRequest(address investor, uint256 amountUg, bytes32 payoutRef) internal returns (uint256 requestId) {
+        vm.prank(forwarder);
+        return trade.createSellRequestFor(investor, amountUg, payoutRef);
+    }
+
+    function _redeemRequest(address investor, uint256 amountUg, bytes32 deliveryRef) internal returns (uint256 requestId) {
+        vm.prank(forwarder);
+        return trade.createRedeemRequestFor(investor, amountUg, deliveryRef);
+    }
+
+    function _approveRequest(address approver, uint256 requestId) internal {
+        vm.prank(forwarder);
+        trade.approveRequestFor(approver, requestId);
+    }
+
+    function _rejectRequest(address rejector, uint256 requestId, string memory reason) internal {
+        vm.prank(forwarder);
+        trade.rejectRequestFor(rejector, requestId, reason);
+    }
+
+    function _cancelRequest(address initiator, uint256 requestId) internal {
+        vm.prank(forwarder);
+        trade.cancelRequestFor(initiator, requestId);
+    }
+
+    function _proposeMint(address ap_, uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta memory lot)
+        internal
+        returns (uint256 requestId)
+    {
+        vm.prank(forwarder);
+        return trade.proposeMintFor(ap_, amountUg, vaultReceiptId, lot);
+    }
+
+    function _proposeBurn(address ap_, uint256 amountUg, bytes32 referenceId, string memory reason_)
+        internal
+        returns (uint256 requestId)
+    {
+        vm.prank(forwarder);
+        return trade.proposeBurnFor(ap_, amountUg, referenceId, reason_);
     }
 
     function _defaultFiat(uint256 amountUg) internal pure returns (uint256) {

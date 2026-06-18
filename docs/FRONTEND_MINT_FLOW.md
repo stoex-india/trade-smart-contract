@@ -2,7 +2,7 @@
 
 This guide covers **tokenizing vaulted gold into the AP buy pool** via the PRD mint path: **propose → VP approve → AT approve → admin execute**.
 
-Mint is the **only** way to add retail inventory on-chain (there is no `seedPoolInventory`). After mint executes, users can **`createBuyRequest`** (see [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md)).
+Mint is the **only** way to add retail inventory on-chain (there is no `seedPoolInventory`). After mint executes, users can **`createBuyRequestFor`** (see onboarding guide).
 
 ---
 
@@ -12,16 +12,16 @@ Mint is the **only** way to add retail inventory on-chain (there is no `seedPool
 |------|-------|
 | Chain | Polygon Amoy |
 | Chain ID | `80002` |
-| Gasless forwarder (Tresori) | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` |
+| Gasless relayer (Tresori) | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
 ### Smart contract addresses
 
 | Contract | Address | Role in mint |
 |----------|---------|--------------|
-| **TradeManager** | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` | `proposeMint`, `approveRequest`, `executeRequest` |
-| **GoldNFT** | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` | Pool supply reads (`totalAssetProviderBalance`, `getPoolLotIds`) |
-| **GovernanceConfig** | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` | `maxAmountPerTx`, `vpRequiredForApprovals`, timelock duration |
-| **TimelockController** | `0xdb3Eedb2C1dfb820b3A59d6d349f6620c8474D2E` | Optional lot timelock after mint execute |
+| **TradeManager** | `0x11c3048159305517ccEACEBA17531996148324aA` | `proposeMintFor`, `approveRequestFor`, `executeRequest` |
+| **GoldNFT** | `0x8C26b220472AB8A8a1627087F3F2612768fA171D` | Pool supply reads |
+| **GovernanceConfig** | `0xEc2AaEE5BC7B7967A2c98F59072b9a376202A4a1` | caps, VP toggle, timelock |
+| **TimelockController** | `0xF12b3226abeb60930C5Ae9aB86846FE1cc5FBd41` | Optional lot timelock |
 
 ABI: `abi/TradeManager.abi.json`, `abi/GoldNFT.abi.json`.
 
@@ -48,9 +48,9 @@ Retail buys pull from `totalAssetProviderBalance` via `transferFromAPToUser`.
 
 | Step | Who | Function | Role required |
 |------|-----|----------|---------------|
-| 1 | Asset Provider | `proposeMint(...)` | `AP_ROLE` on `TradeManager` |
-| 2 | Verifying Party | `approveRequest(requestId)` | `VP_ROLE` |
-| 3 | Asset Trustee | `approveRequest(requestId)` | `AT_ROLE` |
+| 1 | Asset Provider | `proposeMintFor(ap, ...)` | `AP_ROLE` on `ap` |
+| 2 | Verifying Party | `approveRequestFor(vp, requestId)` | `VP_ROLE` on `vp` |
+| 3 | Asset Trustee | `approveRequestFor(at, requestId)` | `AT_ROLE` on `at` |
 | 4 | Operations admin | `executeRequest(requestId)` | `DEFAULT_ADMIN_ROLE` on `TradeManager` |
 
 Default policy (mint): **VP → AT** (no AP approval step after propose).
@@ -66,13 +66,13 @@ sequenceDiagram
     participant Admin as Admin backend
     participant GN as GoldNFT
 
-    AP->>TM: proposeMint(amountUg, vaultReceiptId, lot)
+    AP->>TM: proposeMintFor(ap, amountUg, vaultReceiptId, lot)
     TM-->>AP: requestId, status Proposed
 
-    VP->>TM: approveRequest(requestId)
+    VP->>TM: approveRequestFor(vp, requestId)
     TM-->>VP: status VPApproved
 
-    AT->>TM: approveRequest(requestId)
+    AT->>TM: approveRequestFor(at, requestId)
     TM-->>AT: status ATApproved
 
     Admin->>TM: executeRequest(requestId)
@@ -112,8 +112,8 @@ sequenceDiagram
 ## Phase 1 — AP propose (frontend, gasless)
 
 **Contract:** `TradeManager`  
-**Function:** `proposeMint(uint256 amountUg, bytes32 vaultReceiptId, MintLotMeta lot)`  
-**Signer:** wallet with **`AP_ROLE`** (`fromAddress` in Tresori call)
+**Function:** `proposeMintFor(address ap, uint256 amountUg, bytes32 vaultReceiptId, MintLotMeta lot)`  
+**Signer:** relayer relays with `ap` = wallet holding **`AP_ROLE`**
 
 There is **no `creditTo`** parameter — mint always targets the AP pool.
 
@@ -141,15 +141,16 @@ const vpId = vpMpcWalletAddress;
 const lockUntilTs = 0;
 
 await TreSori().writeGaslessMpcSmartContractTransaction({
-  contractAddress: "0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3",
-  functionName: "proposeMint",
+  contractAddress: "0x11c3048159305517ccEACEBA17531996148324aA",
+  functionName: "proposeMintFor",
   params: [
+    apMpcWalletAddress,
     amountUg,
     vaultReceiptId,
     [vaultReceiptId, batchId, purity, depositTs, apId, vpId, lockUntilTs, amountUg],
   ],
   abi: [
-    "function proposeMint(uint256 amountUg,bytes32 vaultReceiptId,tuple(bytes32 vaultReceiptId,bytes32 batchId,uint16 purity,uint256 depositTimestamp,address apId,address vpId,uint256 lockUntilTs,uint256 amountUg) lot) returns (uint256 requestId)",
+    "function proposeMintFor(address ap,uint256 amountUg,bytes32 vaultReceiptId,tuple(bytes32 vaultReceiptId,bytes32 batchId,uint16 purity,uint256 depositTimestamp,address apId,address vpId,uint256 lockUntilTs,uint256 amountUg) lot) returns (uint256 requestId)",
   ],
   fromAddress: apMpcWalletAddress,
   chain: selectedChain,
@@ -165,15 +166,15 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 
 ## Phase 2 — VP approve (frontend, gasless)
 
-**Function:** `approveRequest(uint256 requestId)`  
-**Signer:** wallet with **`VP_ROLE`**
+**Function:** `approveRequestFor(address approver, uint256 requestId)`  
+**Signer:** relayer relays with `approver` = VP wallet
 
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
-  functionName: "approveRequest",
-  params: [requestId],
-  abi: ["function approveRequest(uint256 requestId)"],
+  functionName: "approveRequestFor",
+  params: [vpMpcWalletAddress, requestId],
+  abi: ["function approveRequestFor(address approver,uint256 requestId)"],
   fromAddress: vpMpcWalletAddress,
   chain: selectedChain,
   clientShare,
@@ -188,8 +189,8 @@ Skip this step when `vpRequiredForApprovals()` is `false`.
 
 ## Phase 3 — AT approve (frontend, gasless)
 
-**Function:** `approveRequest(uint256 requestId)`  
-**Signer:** wallet with **`AT_ROLE`**
+**Function:** `approveRequestFor(address approver, uint256 requestId)`  
+**Signer:** relayer relays with `approver` = AT wallet
 
 Same shape as Phase 2; use AT MPC `fromAddress`.
 

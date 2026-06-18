@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Script, console2} from "forge-std/Script.sol";
+import {console2} from "forge-std/Script.sol";
 
 import {TradeManager} from "../src/TradeManager.sol";
 import {StoexTypes} from "../src/libraries/StoexTypes.sol";
+import {RelayerScript} from "./helpers/RelayerScript.sol";
 
 /// @title MintFlow
-/// @notice PRD mint flow: AP propose -> VP approve -> AT approve -> ADMIN execute.
-contract MintFlow is Script {
+/// @notice PRD mint flow: relayer relays AP propose -> VP approve -> AT approve -> ADMIN execute.
+contract MintFlow is RelayerScript {
     bytes32 private constant _DEFAULT_VAULT_RECEIPT_ID = 0x5641554c542d524350542d303031000000000000000000000000000000000000;
     bytes32 private constant _DEFAULT_BATCH_ID = 0x42415443482d3030310000000000000000000000000000000000000000000000;
 
@@ -19,6 +20,11 @@ contract MintFlow is Script {
         uint256 apPk = vm.envOr("AP_PRIVATE_KEY", adminPk);
         uint256 vpPk = vm.envOr("VP_PRIVATE_KEY", adminPk);
         uint256 atPk = vm.envOr("AT_PRIVATE_KEY", adminPk);
+        uint256 relayerPk = _relayerPk();
+
+        address apAddr = vm.addr(apPk);
+        address vpAddr = vm.addr(vpPk);
+        address atAddr = vm.addr(atPk);
 
         uint256 amountUg = vm.envOr("MINT_AMOUNT_UG", uint256(1_000_000)); // default 1 g
         bytes32 vaultReceiptId = vm.envOr("MINT_VAULT_RECEIPT_ID", _DEFAULT_VAULT_RECEIPT_ID);
@@ -28,22 +34,16 @@ contract MintFlow is Script {
             batchId: vm.envOr("MINT_BATCH_ID", _DEFAULT_BATCH_ID),
             purity: uint16(vm.envOr("MINT_PURITY", uint256(999))),
             depositTimestamp: vm.envOr("MINT_DEPOSIT_TS", block.timestamp),
-            apId: vm.envOr("MINT_AP_ID", vm.addr(apPk)),
-            vpId: vm.envOr("MINT_VP_ID", vm.addr(vpPk)),
+            apId: vm.envOr("MINT_AP_ID", apAddr),
+            vpId: vm.envOr("MINT_VP_ID", vpAddr),
             lockUntilTs: vm.envOr("MINT_LOCK_UNTIL_TS", uint256(0)),
             amountUg: amountUg
         });
 
-        vm.startBroadcast(apPk);
-        uint256 requestId = trade.proposeMint(amountUg, vaultReceiptId, lot);
-        vm.stopBroadcast();
-
-        vm.startBroadcast(vpPk);
-        trade.approveRequest(requestId);
-        vm.stopBroadcast();
-
-        vm.startBroadcast(atPk);
-        trade.approveRequest(requestId);
+        vm.startBroadcast(relayerPk);
+        uint256 requestId = trade.proposeMintFor(apAddr, amountUg, vaultReceiptId, lot);
+        trade.approveRequestFor(vpAddr, requestId);
+        trade.approveRequestFor(atAddr, requestId);
         vm.stopBroadcast();
 
         vm.startBroadcast(adminPk);
