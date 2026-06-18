@@ -24,7 +24,7 @@ contract DeployAmoy is Script {
         address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", initialAdmin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
         address vaultBk = vm.envOr("VAULT_BOOKKEEPING", initialAdmin);
-        // Tresori facilitator / relayer contract used as ERC-2771 trusted forwarder.
+        // Tresori Relayer = ERC-2771 trusted forwarder (must be msg.sender on gasless inner calls).
         address trustedForwarder = vm.envAddress("RELAYER_SMART_CONTRACT");
         if (trustedForwarder == address(0)) revert("RELAYER_SMART_CONTRACT is zero");
 

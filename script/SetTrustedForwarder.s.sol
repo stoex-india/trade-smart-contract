@@ -9,7 +9,8 @@ import {GoldNFT} from "../src/GoldNFT.sol";
 
 /// @title SetTrustedForwarder
 /// @notice Rotates trusted forwarder on all ERC-2771-aware contracts.
-/// @dev Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `WHITELIST_REGISTRY`, `GOLD_NFT`, `RELAYER_SMART_CONTRACT`.
+/// @dev Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `WHITELIST_REGISTRY`, `GOLD_NFT`,
+/// `RELAYER_SMART_CONTRACT` (ERC-2771 trusted forwarder — the contract that directly calls our proxies).
 contract SetTrustedForwarder is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");

@@ -17,7 +17,7 @@ import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 ///
 /// Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `GOVERNANCE_CONFIG`, `WHITELIST_REGISTRY`, `GOLD_NFT`, `TIMELOCK_CONTROLLER`
 /// Optional role holders (omit or set to zero address to skip): `ROLE_AP`, `ROLE_VP`, `ROLE_AT`, `ROLE_PAP`, `ROLE_AUDITOR`
-/// Optional: `RELAYER_SMART_CONTRACT` (or legacy `ERC2771_FORWARDER`) to rotate trusted forwarder on gasless-enabled contracts.
+/// Optional: `RELAYER_SMART_CONTRACT` to set ERC-2771 trusted forwarder on gasless-enabled contracts.
 /// @dev Investor onboarding (`registerUser` / `verifyKYC` / `USER_ROLE`) is intentionally handled by `OnboardInvestors.s.sol`.
 contract ConfigureRoles is Script {
     function run() external {
