@@ -81,6 +81,24 @@
   },
   {
     "type": "function",
+    "name": "approveWalletChangeFor",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "changeRequestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "blacklistWallet",
     "inputs": [
       {
@@ -309,25 +327,6 @@
   },
   {
     "type": "function",
-    "name": "isTrustedForwarder",
-    "inputs": [
-      {
-        "name": "forwarder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "nextWalletChangeId",
     "inputs": [],
     "outputs": [
@@ -354,8 +353,13 @@
   },
   {
     "type": "function",
-    "name": "registerUser",
+    "name": "registerUserFor",
     "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "userId",
         "type": "bytes32",
@@ -405,6 +409,29 @@
     "type": "function",
     "name": "requestWalletChange",
     "inputs": [
+      {
+        "name": "oldWallet",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "newWallet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "requestWalletChangeFor",
+    "inputs": [
+      {
+        "name": "wallet",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "oldWallet",
         "type": "address",
@@ -1110,6 +1137,11 @@
   {
     "type": "error",
     "name": "NotRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotTrustedForwarder",
     "inputs": []
   },
   {

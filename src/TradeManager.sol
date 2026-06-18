@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — TradeManager
-/// @notice **Central orchestrator** for PRD trade requests: **Buy** completes in `createBuyRequest` (auto credit, no admin execute). Other flows: propose → approvals → `executeRequest` (admin) **or** `executeWithCoSignatures` (EIP-712 batch).
+/// @notice **Central orchestrator** for PRD trade requests: **Buy** completes in `createBuyRequestFor` (auto credit, no admin execute). Other flows: propose → approvals → `executeRequest` (admin) **or** `executeWithCoSignatures` (EIP-712 batch).
 /// @dev UUPS upgradeable. Wiring:
 /// - Reads policies from `GovernanceConfig` (caps, expiry, approval order).
 /// - Checks `WhitelistRegistry.isEligible` / `isEligibleForNonKycUser` for user-facing operations.
@@ -10,15 +10,15 @@ pragma solidity ^0.8.24;
 /// - Mutates `GoldNFT` only via `TRADE_MANAGER_ROLE`.
 /// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (legacy routing slot; burn debits AP pool).
 /// **Gold amounts** in request structs and checks are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`.
-/// **Roles on this contract**: grant `USER_ROLE` to investors for `create*`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequest` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
+/// **Roles on this contract**: grant `USER_ROLE` to investors for gasless `create*For`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequestFor` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
+/// Gasless integrations call `*For` with explicit wallet/actor — Tresori relayer does not append ERC-2771 suffix bytes.
+import {StoexRelayerGate} from "./base/StoexRelayerGate.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
-import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {StoexTypes} from "./libraries/StoexTypes.sol";
@@ -35,8 +35,8 @@ contract TradeManager is
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     EIP712Upgradeable,
-    ERC2771ContextUpgradeable,
-    UUPSUpgradeable
+    UUPSUpgradeable,
+    StoexRelayerGate
 {
     uint8 public version;
 
@@ -106,7 +106,7 @@ contract TradeManager is
     event CoSignConsumed(uint256 indexed requestId, uint256 nonce);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() ERC2771ContextUpgradeable(address(0)) {
+    constructor() {
         _disableInitializers();
     }
 
@@ -153,7 +153,7 @@ contract TradeManager is
 
     /// @notice Called only by `WhitelistRegistry` during user onboarding to grant trade `USER_ROLE`.
     function grantUserRoleFromRegistry(address user) external {
-        if (_msgSender() != address(whitelistRegistry)) revert NotWhitelistRegistry();
+        if (msg.sender != address(whitelistRegistry)) revert NotWhitelistRegistry();
         if (user == address(0)) revert ZeroAddress();
         _grantRole(StoexRoles.USER_ROLE, user);
     }
@@ -185,15 +185,25 @@ contract TradeManager is
     /// @param fiat_value INR minor units for this leg (e.g. paise); non-KYC cumulative cap uses this field.
     /// @param payment_ref Off-chain payment correlation id.
     /// @param txDetailsHash Audit hash for rails / settlement metadata.
-    function createBuyRequest(uint256 weightUg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)
-        external
-        onlyRole(StoexRoles.USER_ROLE)
-        whenNotPaused
-        nonReentrant
-        returns (uint256 requestId)
-    {
+    function createBuyRequestFor(
+        address user,
+        uint256 weightUg,
+        uint256 fiat_value,
+        bytes32 payment_ref,
+        bytes32 txDetailsHash
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
+        _requireUserRole(user);
+        return _createBuyRequest(user, weightUg, fiat_value, payment_ref, txDetailsHash);
+    }
+
+    function _createBuyRequest(
+        address user,
+        uint256 weightUg,
+        uint256 fiat_value,
+        bytes32 payment_ref,
+        bytes32 txDetailsHash
+    ) private returns (uint256 requestId) {
         if (!routingConfigured) revert RoutingNotSet();
-        address user = _msgSender();
         _checkBuyGoldAmount(weightUg);
         if (fiat_value == 0) revert ZeroFiatValue();
         if (goldNFT.totalAssetProviderBalance() < weightUg) revert InsufficientApInventory();
@@ -210,9 +220,22 @@ contract TradeManager is
         _finalizeBuy(requestId, user, weightUg, fiat_value, payment_ref, txDetailsHash);
     }
 
-    function createSellRequest(uint256 amountUg, bytes32 payoutRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
+    function createSellRequestFor(address user, uint256 amountUg, bytes32 payoutRefId)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
+        _requireUserRole(user);
+        return _createSellRequest(user, amountUg, payoutRefId);
+    }
+
+    function _createSellRequest(address user, uint256 amountUg, bytes32 payoutRefId)
+        private
+        returns (uint256 requestId)
+    {
         if (!routingConfigured) revert RoutingNotSet();
-        address user = _msgSender();
         _requireEligible(user);
         _requireNotTimelocked(user);
         _checkAmountUg(amountUg);
@@ -242,9 +265,22 @@ contract TradeManager is
         emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, amountUg, 0);
     }
 
-    function createRedeemRequest(uint256 amountUg, bytes32 deliveryRefId) external onlyRole(StoexRoles.USER_ROLE) whenNotPaused nonReentrant returns (uint256 requestId) {
+    function createRedeemRequestFor(address user, uint256 amountUg, bytes32 deliveryRefId)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
+        _requireUserRole(user);
+        return _createRedeemRequest(user, amountUg, deliveryRefId);
+    }
+
+    function _createRedeemRequest(address user, uint256 amountUg, bytes32 deliveryRefId)
+        private
+        returns (uint256 requestId)
+    {
         if (!routingConfigured) revert RoutingNotSet();
-        address user = _msgSender();
         _requireEligible(user);
         _requireNotTimelocked(user);
         if (amountUg < governance.minRedeemAmountUg()) revert BelowMinRedeem();
@@ -274,11 +310,19 @@ contract TradeManager is
         emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
-    function proposeMint(uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
+    function proposeMintFor(address ap, uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
         external
-        onlyRole(StoexRoles.AP_ROLE)
+        onlyTrustedForwarder
         whenNotPaused
         nonReentrant
+        returns (uint256 requestId)
+    {
+        if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
+        return _proposeMint(ap, amountUg, vaultReceiptId, lot);
+    }
+
+    function _proposeMint(address ap, uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
+        private
         returns (uint256 requestId)
     {
         if (!routingConfigured) revert RoutingNotSet();
@@ -293,7 +337,7 @@ contract TradeManager is
         _requests[requestId] = TradeRequest({
             requestType: StoexTypes.RequestType.Mint,
             status: StoexTypes.RequestStatus.Proposed,
-            initiator: _msgSender(),
+            initiator: ap,
             targetUser: address(0),
             amountUg: amountUg,
             paymentRefId: bytes32(0),
@@ -308,14 +352,22 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, _msgSender(), amountUg, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, ap, amountUg, 0);
     }
 
-    function proposeBurn(uint256 amountUg, bytes32 referenceId, string calldata reason_)
+    function proposeBurnFor(address ap, uint256 amountUg, bytes32 referenceId, string calldata reason_)
         external
-        onlyRole(StoexRoles.AP_ROLE)
+        onlyTrustedForwarder
         whenNotPaused
         nonReentrant
+        returns (uint256 requestId)
+    {
+        if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
+        return _proposeBurn(ap, amountUg, referenceId, reason_);
+    }
+
+    function _proposeBurn(address ap, uint256 amountUg, bytes32 referenceId, string calldata reason_)
+        private
         returns (uint256 requestId)
     {
         if (!routingConfigured) revert RoutingNotSet();
@@ -326,7 +378,7 @@ contract TradeManager is
         _requests[requestId] = TradeRequest({
             requestType: StoexTypes.RequestType.Burn,
             status: StoexTypes.RequestStatus.Proposed,
-            initiator: _msgSender(),
+            initiator: ap,
             targetUser: address(0),
             amountUg: amountUg,
             paymentRefId: referenceId,
@@ -341,10 +393,14 @@ contract TradeManager is
             txDetailsHash: bytes32(0)
         });
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, _msgSender(), amountUg, 0);
+        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, ap, amountUg, 0);
     }
 
-    function approveRequest(uint256 requestId) external whenNotPaused nonReentrant {
+    function approveRequestFor(address approver, uint256 requestId) external onlyTrustedForwarder whenNotPaused nonReentrant {
+        _approveRequest(approver, requestId);
+    }
+
+    function _approveRequest(address approver, uint256 requestId) private {
         TradeRequest storage r = _requests[requestId];
         _requirePending(r);
         if (block.timestamp > r.expiresAt) revert Expired();
@@ -353,7 +409,7 @@ contract TradeManager is
         if (r.approvalsDone >= pol.length) revert FullyApproved();
 
         bytes32 requiredRole = pol[r.approvalsDone];
-        if (!hasRole(requiredRole, _msgSender())) revert NotApprover();
+        if (!hasRole(requiredRole, approver)) revert NotApprover();
         uint256 step = r.approvalsDone;
         if (_stepApproved[requestId][step]) revert StepDone();
 
@@ -367,15 +423,24 @@ contract TradeManager is
             r.status = _roleMilestone(approvedRole);
         }
 
-        emit RequestApproved(requestId, approvedRole, _msgSender());
+        emit RequestApproved(requestId, approvedRole, approver);
     }
 
-    function rejectRequest(uint256 requestId, string calldata reason_) external whenNotPaused nonReentrant {
+    function rejectRequestFor(address rejector, uint256 requestId, string calldata reason_)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+    {
+        _rejectRequest(rejector, requestId, reason_);
+    }
+
+    function _rejectRequest(address rejector, uint256 requestId, string calldata reason_) private {
         TradeRequest storage r = _requests[requestId];
         _requirePending(r);
         if (
-            !hasRole(StoexRoles.AP_ROLE, _msgSender()) && !hasRole(StoexRoles.VP_ROLE, _msgSender())
-                && !hasRole(StoexRoles.AT_ROLE, _msgSender()) && !hasRole(StoexRoles.PAP_ROLE, _msgSender())
+            !hasRole(StoexRoles.AP_ROLE, rejector) && !hasRole(StoexRoles.VP_ROLE, rejector)
+                && !hasRole(StoexRoles.AT_ROLE, rejector) && !hasRole(StoexRoles.PAP_ROLE, rejector)
         ) {
             revert NotApprover();
         }
@@ -385,12 +450,21 @@ contract TradeManager is
         }
         r.escrowLocked = false;
         r.status = StoexTypes.RequestStatus.Rejected;
-        emit RequestRejected(requestId, bytes32(0), _msgSender(), reason_);
+        emit RequestRejected(requestId, bytes32(0), rejector, reason_);
     }
 
-    function cancelRequest(uint256 requestId) external whenNotPaused nonReentrant {
+    function cancelRequestFor(address initiator, uint256 requestId)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+    {
+        _cancelRequest(initiator, requestId);
+    }
+
+    function _cancelRequest(address initiator, uint256 requestId) private {
         TradeRequest storage r = _requests[requestId];
-        if (r.initiator != _msgSender()) revert NotInitiator();
+        if (r.initiator != initiator) revert NotInitiator();
         _requirePending(r);
         if (r.escrowLocked) {
             escrowVault.unlockTokens(requestId);
@@ -551,6 +625,10 @@ contract TradeManager is
         if (!whitelistRegistry.isEligible(u)) revert NotEligible();
     }
 
+    function _requireUserRole(address user) private view {
+        if (!hasRole(StoexRoles.USER_ROLE, user)) revert NotUser();
+    }
+
     function _requireNotTimelocked(address user) private view {
         if (timelockController.isTimelocked(user)) revert Timelocked();
         uint256[] memory lots = goldNFT.getUserLotIds(user);
@@ -624,29 +702,12 @@ contract TradeManager is
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    function _contextSuffixLength()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (uint256)
-    {
-        return ERC2771ContextUpgradeable._contextSuffixLength();
-    }
-
-
-    function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {
-        return ERC2771ContextUpgradeable._msgSender();
-    }
-
-    function _msgData() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (bytes calldata) {
-        return ERC2771ContextUpgradeable._msgData();
-    }
-
-    uint256[34] private __gap;
+    uint256[37] private __gap;
 
     error ZeroAddress();
     error NotWhitelistRegistry();
     error NotEligible();
+    error NotUser();
     error ZeroAmount();
     error ExceedsMax();
     error CapBuy();

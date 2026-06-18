@@ -1,6 +1,6 @@
 # STOEX Gold — Smart contracts (Foundry)
 
-UUPS upgradeable EVM implementation of the **STOEX India Gold NFT Technical PRD v2.0** (Polygon Amoy / EVM-compatible chains), including **ERC-2771 gasless transaction support** for selected operations.
+UUPS upgradeable EVM implementation of the **STOEX India Gold NFT Technical PRD v2.0** (Polygon Amoy / EVM-compatible chains), including **Tresori relayer-gated `*For` gasless entrypoints** for user and ops flows.
 
 ## Requirements
 
@@ -17,19 +17,19 @@ forge test -vv
 
 | Contract | Proxy address |
 |----------|---------------|
-| **GovernanceConfig** | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` |
-| **WhitelistRegistry** | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` |
-| **GoldNFT** | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` |
-| **EscrowVault** | `0xbb40B6f14bfa98322a5aDdc1D5accc92D917c891` |
-| **TimelockController** | `0xdb3Eedb2C1dfb820b3A59d6d349f6620c8474D2E` |
-| **TradeManager** | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` |
-| **Tresori gasless forwarder** | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` (`RELAYER_SMART_CONTRACT`) |
+| **GovernanceConfig** | `0xEc2AaEE5BC7B7967A2c98F59072b9a376202A4a1` |
+| **WhitelistRegistry** | `0x2A31A7b68418Ea301A6667fB7F1078170986EC98` |
+| **GoldNFT** | `0x8C26b220472AB8A8a1627087F3F2612768fA171D` |
+| **EscrowVault** | `0x0E4e5bb30162104736F0a718984fa48DFBB383C2` |
+| **TimelockController** | `0xF12b3226abeb60930C5Ae9aB86846FE1cc5FBd41` |
+| **TradeManager** | `0x11c3048159305517ccEACEBA17531996148324aA` |
+| **Tresori relayer** (`RELAYER_SMART_CONTRACT`) | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
 **Frontend onboarding:** see [docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md) (register → verify KYC → `cast` buy-readiness checks).
 
 **Mint / AP pool:** see [docs/FRONTEND_MINT_FLOW.md](docs/FRONTEND_MINT_FLOW.md) (propose → approve → execute → pool funded → buys enabled).
 
-Redeployed **June 2026** with mint-to-AP-pool supply model (no `seedPoolInventory`, no `creditTo` on `proposeMint`).
+Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori relayer passes explicit wallet/actor; `registerUser` removed).
 
 ## Repository layout
 
@@ -45,7 +45,7 @@ Redeployed **June 2026** with mint-to-AP-pool supply model (no `seedPoolInventor
 | `script/GovernanceAdminFlags.s.sol` | Admin toggles `GovernanceConfig.vpRequiredForApprovals` |
 | `script/ConfigureRoles.s.sol` | Grant AP/VP/AT/PAP/Auditor + optional forwarder rotation (**admin** key) |
 | `script/OnboardInvestors.s.sol` | Register + verify KYC + grant `USER_ROLE` for `INVESTOR_1..20` |
-| `script/BuyFlow.s.sol` | **`createBuyRequest` only** — buy settles in one tx (no admin execute) |
+| `script/BuyFlow.s.sol` | Relayer calls **`createBuyRequestFor`** — buy settles in one tx |
 | `script/SellFlow.s.sol` | Sell request lifecycle (USER -> AP -> AT -> ADMIN execute) |
 | `script/RedeemFlow.s.sol` | Redeem lifecycle (USER -> AP -> VP -> PAP -> AT -> ADMIN execute) |
 | `script/MintFlow.s.sol` | Mint lifecycle (AP -> VP -> AT -> ADMIN execute) |
@@ -53,7 +53,7 @@ Redeployed **June 2026** with mint-to-AP-pool supply model (no `seedPoolInventor
 | `test/helpers/StoexFixture.sol` | Shared deployment for tests |
 | `test/StoexPRD.t.sol` | PRD-mapped integration tests |
 | `docs/` | Integration and API documentation for contracts + SDK-driven gasless flows |
-| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUser`, admin `verifyKYC`, ops `cast` verification |
+| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUserFor`, admin `verifyKYC`, ops `cast` verification |
 | `docs/FRONTEND_MINT_FLOW.md` | **Mint ops** — `proposeMint` → VP → AT → execute, AP pool funding, buy-readiness checks |
 
 ---
@@ -68,9 +68,9 @@ Redeployed **June 2026** with mint-to-AP-pool supply model (no `seedPoolInventor
 
 ### KYC tiers (buy vs full access)
 
-- **`registerUser(bytes32 userId, string kycRef)`** — permissionless self-registration; wallet is `_msgSender()` (ERC-2771 gasless). Grants `USER_ROLE` on registry + `TradeManager`.
+- **`registerUserFor(address wallet, bytes32 userId, string kycRef)`** — gasless self-registration via Tresori relayer; explicit `wallet` (MPC `fromAddress`). Grants `USER_ROLE` on registry + `TradeManager`.
 - **`adminRegisterUser(bytes32 userId, address wallet, string kycRef)`** — admin back-office path (same role grants).
-- **`isEligibleForNonKycUser`** is true for **Pending** KYC users (whitelisted wallet, active, within risk rules). They may **`createBuyRequest` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**: cumulative executed **`fiat_value`** (INR minor units, e.g. paise) must stay within cap (Asset Trustee adjusts via **`setNonKycMaxBuyFiatAmount`**).
+- **`isEligibleForNonKycUser`** is true for **Pending** KYC users. They may **`createBuyRequestFor` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**.
 - **`verifyKYC`** (admin) moves a user to **Verified** → **`isEligible`** is true → sell, redeem, full daily buy cap (`dailyBuyCap`), mint/burn bookkeeping paths, nominee transfer, etc., as before.
 - **`rejectKYC`** users are not eligible for the non-KYC buy path.
 
@@ -236,7 +236,7 @@ cast call $GOLD_NFT "hasRole(bytes32,address)(bool)" $AP_ROLE $ROLE_AP --rpc-url
 
 ### 6) Onboard investors
 
-**Production (frontend):** users call **`registerUser(bytes32 userId, string kycRef)`** gasless on `WhitelistRegistry`; admin calls **`verifyKYC(wallet)`** from a secure backend. Full flow, contract addresses, and ops `cast` checks: **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)**.
+**Production (frontend):** users call **`registerUserFor(wallet, userId, kycRef)`** gasless on `WhitelistRegistry`; admin calls **`verifyKYC(wallet)`** from a secure backend. Full flow: **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)**.
 
 **Script back-office (`OnboardInvestors`):** admin-driven batch onboarding for test wallets.
 
@@ -267,7 +267,7 @@ What this script does for each configured investor wallet:
 
 `userId` is deterministic in this script: `keccak256("INVESTOR_<n>|<wallet>")`.
 
-`USER_ROLE` on `TradeManager` is required for `createBuyRequest` / `createSellRequest` / `createRedeemRequest` (sell/redeem still require **verified** `isEligible`).  
+`USER_ROLE` on `TradeManager` is required for gasless `createBuyRequestFor` / `createSellRequestFor` / `createRedeemRequestFor` (sell/redeem still require **verified** `isEligible`).  
 `USER_ROLE` on `WhitelistRegistry` is required for `requestWalletChange` (**verified** users only for meaningful migration flows).
 
 **Non-KYC (pending) buy onboarding example:**
@@ -316,7 +316,7 @@ Step 7 scripts remain deterministic direct role-by-role runners. For user gasles
 
 | Flow | Who starts | Approval order (default) | Execution |
 |------|------------|--------------------------|-----------|
-| **Buy** | Investor (`createBuyRequest(weightUg, fiat_value, payment_ref, txDetailsHash)`) | *none* | *Immediate* — request stored as **Executed**; `GoldNFT.transferFromAPToUser` in same call |
+| **Buy** | Investor (`createBuyRequestFor(user, weightUg, fiat_value, payment_ref, txDetailsHash)`) via relayer | *none* | *Immediate* |
 | **Sell** | Investor (`createSellRequest`, escrow locks) | AP → AT | Admin execute |
 | **Redeem** | Investor (`createRedeemRequest`) | AP → VP → PAP → AT (VP step omitted if `vpRequiredForApprovals` is false) | Admin execute |
 | **Mint** | AP (`proposeMint`) | VP → AT (VP omitted if disabled) | Admin execute → **`mintToPool`** (AP buy inventory) |
@@ -330,7 +330,7 @@ Step 7 scripts remain deterministic direct role-by-role runners. For user gasles
 VP_REQUIRED=false forge script script/GovernanceAdminFlags.s.sol:GovernanceAdminFlags --rpc-url $AMOY_RPC_URL --broadcast
 ```
 
-**Buy** does not use `getApprovalPolicy` (no AP/AT, no admin execute). **Sell** default policy is unchanged (AP → AT, no VP step). Co-signatures and `approveRequest` apply to **non-Buy** request types with a non-empty policy.
+**Buy** does not use `getApprovalPolicy`. Co-signatures and `approveRequestFor` apply to **non-Buy** request types with a non-empty policy.
 
 **`GovernanceConfig`**: `minimumBuyGoldValueInUg` (admin, **`setMinimumBuyGoldValueInUg`**) enforces a floor on buy size; set to **0** to disable the floor. **Amount caps** (`dailyBuyCap`, `maxAmountPerTx`, `minRedeemAmountUg`, etc.) are expressed in **µg** (`goldPrecision` default is **6** for gram display).
 
@@ -505,10 +505,10 @@ Use Tresori SDK:
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
-  functionName: "createBuyRequest",
-  params: [weightUg, fiatValue, paymentRefBytes32, txDetailsHashBytes32],
+  functionName: "createBuyRequestFor",
+  params: [userMpcWallet, weightUg, fiatValue, paymentRefBytes32, txDetailsHashBytes32],
   abi: [
-    "function createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
+    "function createBuyRequestFor(address user,uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
   ],
   fromAddress: userMpcWallet,
   chain: selectedChain,
@@ -518,12 +518,13 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 });
 ```
 
-Use the same function for:
+Use the same `*For` pattern (explicit wallet/actor as first param) for:
 
-- `createSellRequest(...)`
-- `createRedeemRequest(...)`
-- `proposeMint(...)`
-- `proposeBurn(...)`
+- `createSellRequestFor(user, ...)`
+- `createRedeemRequestFor(user, ...)`
+- `proposeMintFor(ap, ...)`
+- `proposeBurnFor(ap, ...)`
+- `approveRequestFor(approver, requestId)`
 
 #### Step 8.3 - Validation checklist
 

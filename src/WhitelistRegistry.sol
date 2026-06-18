@@ -5,15 +5,14 @@ pragma solidity ^0.8.24;
 /// @notice On-chain **KYC / wallet / compliance** state. `isEligible` is the single gate used by `GoldNFT` and user-facing `TradeManager` flows.
 /// @dev UUPS upgradeable. Important roles (same `AccessControl` pattern as PRD):
 /// - `DEFAULT_ADMIN_ROLE`: admin-register users, KYC, wallet risk, suspend/blacklist; grant `USER_ROLE` for wallet-change requests.
-/// - Self-service: anyone may `registerUser` (ERC-2771 `_msgSender()`); admin may `adminRegisterUser` for back-office onboarding.
-/// - `USER_ROLE`: investor may `requestWalletChange` for their own wallet.
+/// - Self-service: gasless `registerUserFor` (relayer passes explicit wallet); admin may `adminRegisterUser` for back-office onboarding.
+/// - `USER_ROLE`: investor may `requestWalletChangeFor` for their own wallet via relayer.
 /// - `AT_ROLE`: co-approve wallet migration with admin; `unsuspendWallet` override.
 /// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
-import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
-import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
+import {StoexRelayerGate} from "./base/StoexRelayerGate.sol";
 
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
@@ -23,8 +22,8 @@ import {ITradeManagerOnboarding} from "./interfaces/ITradeManagerOnboarding.sol"
 contract WhitelistRegistry is
     Initializable,
     StoexDeployerAdminUpgradeable,
-    ERC2771ContextUpgradeable,
     UUPSUpgradeable,
+    StoexRelayerGate,
     IWhitelistRegistry
 {
     uint8 public version;
@@ -53,7 +52,7 @@ contract WhitelistRegistry is
     event RiskLevelChanged(address indexed wallet, StoexTypes.RiskLevel oldLevel, StoexTypes.RiskLevel newLevel, bytes32 caseRef);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() ERC2771ContextUpgradeable(address(0)) {
+    constructor() {
         _disableInitializers();
     }
 
@@ -82,9 +81,9 @@ contract WhitelistRegistry is
         tradeManager = ITradeManagerOnboarding(tradeManager_);
     }
 
-    /// @notice Permissionless self-registration. `wallet` is `_msgSender()` (supports ERC-2771 gasless).
-    function registerUser(bytes32 userId, string calldata kycRef) external {
-        _registerUser(_msgSender(), userId, kycRef);
+    /// @notice Gasless self-registration via Tresori relayer. `wallet` is the investor MPC address (`fromAddress`).
+    function registerUserFor(address wallet, bytes32 userId, string calldata kycRef) external onlyTrustedForwarder {
+        _registerUser(wallet, userId, kycRef);
     }
 
     /// @notice Admin back-office registration for any wallet (admin panel).
@@ -144,23 +143,46 @@ contract WhitelistRegistry is
         emit WalletStatusChanged(wallet, old_, p.walletStatus);
     }
 
+    /// @notice Gasless wallet-change request. `wallet` must equal `oldWallet` and hold `USER_ROLE`.
+    function requestWalletChangeFor(address wallet, address oldWallet, address newWallet)
+        external
+        onlyTrustedForwarder
+    {
+        if (!hasRole(StoexRoles.USER_ROLE, wallet)) revert NotWalletOwner();
+        _requestWalletChange(wallet, oldWallet, newWallet);
+    }
+
+    /// @notice Direct wallet-change request (EOA calls as wallet owner).
     function requestWalletChange(address oldWallet, address newWallet) external onlyRole(StoexRoles.USER_ROLE) {
+        _requestWalletChange(msg.sender, oldWallet, newWallet);
+    }
+
+    function _requestWalletChange(address wallet, address oldWallet, address newWallet) private {
         if (newWallet == address(0)) revert ZeroAddress();
-        if (_msgSender() != oldWallet) revert NotWalletOwner();
+        if (wallet != oldWallet) revert NotWalletOwner();
         if (!_registered[oldWallet]) revert NotRegistered();
         uint256 id = ++nextWalletChangeId;
         walletChangeRequests[id] = WalletChangeRequest({oldWallet: oldWallet, newWallet: newWallet, adminOk: false, trusteeOk: false, processed: false});
         emit WalletChangeRequested(id, oldWallet, newWallet);
     }
 
+    /// @notice Gasless dual approval. `actor` must hold `AT_ROLE` or `DEFAULT_ADMIN_ROLE`.
+    function approveWalletChangeFor(address actor, uint256 changeRequestId) external onlyTrustedForwarder {
+        _approveWalletChange(actor, changeRequestId);
+    }
+
     /// @notice Asset Trustee and Default Admin must both call this (in any order) before migration runs.
     function approveWalletChange(uint256 changeRequestId) external {
+        _approveWalletChange(msg.sender, changeRequestId);
+    }
+
+    function _approveWalletChange(address actor, uint256 changeRequestId) private {
         WalletChangeRequest storage w = walletChangeRequests[changeRequestId];
         if (w.oldWallet == address(0)) revert InvalidRequest();
         if (w.processed) revert AlreadyProcessed();
 
-        if (hasRole(StoexRoles.AT_ROLE, _msgSender())) w.trusteeOk = true;
-        if (hasRole(DEFAULT_ADMIN_ROLE, _msgSender())) w.adminOk = true;
+        if (hasRole(StoexRoles.AT_ROLE, actor)) w.trusteeOk = true;
+        if (hasRole(DEFAULT_ADMIN_ROLE, actor)) w.adminOk = true;
 
         if (w.adminOk && w.trusteeOk) {
             _migrateWallet(w.oldWallet, w.newWallet);
@@ -256,24 +278,6 @@ contract WhitelistRegistry is
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    function _contextSuffixLength()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (uint256)
-    {
-        return ERC2771ContextUpgradeable._contextSuffixLength();
-    }
-
-
-    function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {
-        return ERC2771ContextUpgradeable._msgSender();
-    }
-
-    function _msgData() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (bytes calldata) {
-        return ERC2771ContextUpgradeable._msgData();
-    }
 
     error ZeroAddress();
     error TradeManagerNotSet();

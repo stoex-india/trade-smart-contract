@@ -19,11 +19,11 @@ Same as above; never hard-code stale proxy addresses from an old deployment.
 
 | Contract | Address |
 |----------|---------|
-| TradeManager | `0x4AF90173D906021B9B56AA3dE31a0F26Ac44F9F3` |
-| GoldNFT | `0x39E5D9E00bE5EB79332e85811Aa41c3f42Ba6eE7` |
-| GovernanceConfig | `0x0a7B6033e405337fEF5F38254c02DE8354dEDbCa` |
-| WhitelistRegistry | `0xF6f299F574f136873e7Df9D54311AA62d09B9D52` |
-| Tresori forwarder | `0x9DE37157464E5Ecf8FD0AB0d88D2B08c3cdfFf6D` |
+| TradeManager | `0x11c3048159305517ccEACEBA17531996148324aA` |
+| GoldNFT | `0x8C26b220472AB8A8a1627087F3F2612768fA171D` |
+| GovernanceConfig | `0xEc2AaEE5BC7B7967A2c98F59072b9a376202A4a1` |
+| WhitelistRegistry | `0x2A31A7b68418Ea301A6667fB7F1078170986EC98` |
+| Tresori relayer | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
 ## 2) Units and Encoding
 
@@ -54,9 +54,9 @@ Use direct contract reads:
 
 ## 4) Gasless Write Pattern (All Operations)
 
-For all user/operator writes, call Tresori SDK:
+All user/operator writes use Tresori SDK `writeGaslessMpcSmartContractTransaction(...)`.
 
-`writeGaslessMpcSmartContractTransaction(...)`
+**Important:** Tresori relayer does **not** append ERC-2771 suffix bytes. Call **`functionName` ending in `For`** and pass the **wallet/actor as the first parameter**. Verify inner relay success, not only the outer tx hash.
 
 ## 5) Operation Flows
 
@@ -78,16 +78,16 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 
 ### Buy (user, gasless, auto-executed)
 
-`createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)`
+`createBuyRequestFor(address user, uint256 weightUg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)`
 
 ```ts
 const weightUg = "1000000"; // 1 g
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
-  functionName: "createBuyRequest",
-  params: [weightUg, fiatValue, paymentRef32, txDetailsHash32],
+  functionName: "createBuyRequestFor",
+  params: [fromAddress, weightUg, fiatValue, paymentRef32, txDetailsHash32],
   abi: [
-    "function createBuyRequest(uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
+    "function createBuyRequestFor(address user,uint256 weightUg,uint256 fiat_value,bytes32 payment_ref,bytes32 txDetailsHash)"
   ],
   fromAddress,
   chain: selectedChain,
@@ -97,18 +97,16 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 });
 ```
 
-Expected: request is created and executed in the same transaction.
-
 ### Sell (user, gasless request creation)
 
-`createSellRequest(uint256 amountUg,bytes32 payoutRefId)`
+`createSellRequestFor(address user, uint256 amountUg, bytes32 payoutRefId)`
 
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
-  functionName: "createSellRequest",
-  params: [amountUg, payoutRefId32],
-  abi: ["function createSellRequest(uint256 amountUg,bytes32 payoutRefId)"],
+  functionName: "createSellRequestFor",
+  params: [fromAddress, amountUg, payoutRefId32],
+  abi: ["function createSellRequestFor(address user,uint256 amountUg,bytes32 payoutRefId)"],
   fromAddress,
   chain: selectedChain,
   clientShare,
@@ -117,18 +115,16 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 });
 ```
 
-Then track status until approvals + admin execution complete.
-
 ### Redeem (user, gasless request creation)
 
-`createRedeemRequest(uint256 amountUg,bytes32 deliveryRefId)`
+`createRedeemRequestFor(address user, uint256 amountUg, bytes32 deliveryRefId)`
 
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
-  functionName: "createRedeemRequest",
-  params: [amountUg, deliveryRefId32],
-  abi: ["function createRedeemRequest(uint256 amountUg,bytes32 deliveryRefId)"],
+  functionName: "createRedeemRequestFor",
+  params: [fromAddress, amountUg, deliveryRefId32],
+  abi: ["function createRedeemRequestFor(address user,uint256 amountUg,bytes32 deliveryRefId)"],
   fromAddress,
   chain: selectedChain,
   clientShare,
@@ -139,26 +135,19 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 
 ### User onboarding (gasless)
 
-See **[FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md)** for the full flow, Amoy addresses, and ops verification commands.
+See **[FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md)**.
 
-`registerUser(bytes32 userId,string kycRef)` on **`WhitelistRegistry`** — wallet is the gasless `fromAddress` (no wallet argument).
+`registerUserFor(address wallet, bytes32 userId, string kycRef)` on **`WhitelistRegistry`**.
 
 ### Mint (AP/operator, gasless proposal)
 
-Full step-by-step (approvals, execute, verification): **[FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md)**.
+Full step-by-step: **[FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md)**.
 
-`proposeMint(uint256 amountUg,bytes32 vaultReceiptId,(bytes32,bytes32,uint16,uint256,address,address,uint256,uint256))`
-
-- Mint execute credits the **AP buy pool**, not a user wallet.
-- Tuple field order: `vaultReceiptId`, `batchId`, `purity`, `depositTimestamp`, `apId`, `vpId`, `lockUntilTs`, **`amountUg`**.
-- Prefer **array** form for `params[2]` in the SDK, e.g. `[vaultReceiptId, batchId, purity, depositTs, apId, vpId, lockUntilTs, amountUg]`.
-- `fromAddress` must hold `AP_ROLE` on `TradeManager`.
+`proposeMintFor(address ap, uint256 amountUg, bytes32 vaultReceiptId, MintLotMeta lot)`
 
 ### Burn (AP/operator, gasless proposal)
 
-`proposeBurn(uint256 amountUg,bytes32 referenceId,string reason_)`
-
-Caller must be AP role wallet (`fromAddress`).
+`proposeBurnFor(address ap, uint256 amountUg, bytes32 referenceId, string reason_)`
 
 ## 6) Role Requirements
 
