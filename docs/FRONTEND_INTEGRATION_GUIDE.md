@@ -168,6 +168,7 @@ Share with external integrators:
 
 - This guide.
 - [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md) — user onboarding flow.
+- [FRONTEND_ADMIN_ROLES.md](./FRONTEND_ADMIN_ROLES.md) — admin panel roles and admin transfer.
 - [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) — mint / AP pool ops flow.
 - Contract addresses for the current deployment.
 - ABI JSON files.
