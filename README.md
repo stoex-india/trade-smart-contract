@@ -27,6 +27,8 @@ forge test -vv
 
 **Frontend onboarding:** see [docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md) (register → verify KYC → `cast` buy-readiness checks).
 
+**Admin roles:** see [docs/FRONTEND_ADMIN_ROLES.md](docs/FRONTEND_ADMIN_ROLES.md) (grant AP/VP/AT, transfer admin, verify `hasRole`).
+
 **Mint / AP pool:** see [docs/FRONTEND_MINT_FLOW.md](docs/FRONTEND_MINT_FLOW.md) (propose → approve → execute → pool funded → buys enabled).
 
 Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori relayer passes explicit wallet/actor; `registerUser` removed).
@@ -53,8 +55,9 @@ Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori 
 | `test/helpers/StoexFixture.sol` | Shared deployment for tests |
 | `test/StoexPRD.t.sol` | PRD-mapped integration tests |
 | `docs/` | Integration and API documentation for contracts + SDK-driven gasless flows |
-| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUserFor`, admin `verifyKYC`, ops `cast` verification |
-| `docs/FRONTEND_MINT_FLOW.md` | **Mint ops** — `proposeMint` → VP → AT → execute, AP pool funding, buy-readiness checks |
+| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUserFor`, admin `verifyKYC` |
+| `docs/FRONTEND_ADMIN_ROLES.md` | **Admin panel** — grant AP/VP/AT, `transferAdmin`, `hasRole` verification |
+| `docs/FRONTEND_MINT_FLOW.md` | **Mint ops** — `proposeMintFor` → VP → AT → execute |
 
 ---
 
