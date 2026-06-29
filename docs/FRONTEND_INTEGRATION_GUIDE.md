@@ -78,6 +78,8 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 
 ### Buy (user, gasless, auto-executed)
 
+Full step-by-step: **[FRONTEND_BUY_FLOW.md](./FRONTEND_BUY_FLOW.md)**.
+
 `createBuyRequestFor(address user, uint256 weightUg, uint256 fiat_value, bytes32 payment_ref, bytes32 txDetailsHash)`
 
 ```ts
@@ -170,7 +172,7 @@ Share with external integrators:
 - [FRONTEND_USER_ONBOARDING.md](./FRONTEND_USER_ONBOARDING.md) — user onboarding flow.
 - [FRONTEND_ADMIN_ROLES.md](./FRONTEND_ADMIN_ROLES.md) — admin panel roles and admin transfer.
 - [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) — mint / AP pool ops flow.
-- Contract addresses for the current deployment.
+- [FRONTEND_BUY_FLOW.md](./FRONTEND_BUY_FLOW.md) — user buy flow.
 - ABI JSON files.
 - Chain RPC + chain ID.
 - Required role model and function payload examples above.

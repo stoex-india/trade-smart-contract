@@ -31,6 +31,8 @@ forge test -vv
 
 **Mint / AP pool:** see [docs/FRONTEND_MINT_FLOW.md](docs/FRONTEND_MINT_FLOW.md) (propose → approve → execute → pool funded → buys enabled).
 
+**User buy:** see [docs/FRONTEND_BUY_FLOW.md](docs/FRONTEND_BUY_FLOW.md) (single gasless `createBuyRequestFor` → immediate `Executed`).
+
 Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori relayer passes explicit wallet/actor; `registerUser` removed).
 
 ## Repository layout

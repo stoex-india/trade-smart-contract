@@ -3,7 +3,7 @@
 How to onboard investors on **Polygon Amoy** using Tresori gasless transactions.
 
 **Scope of this doc:** register user → check status → admin verifies KYC.  
-**Not in this doc:** buy and mint (see [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md) and [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md)).
+**Not in this doc:** buy → [FRONTEND_BUY_FLOW.md](./FRONTEND_BUY_FLOW.md) · mint → [FRONTEND_MINT_FLOW.md](./FRONTEND_MINT_FLOW.md).
 
 ---
 
@@ -148,7 +148,7 @@ const fullAccess = await registry.isEligible(userMpcWallet);
 
 ## 7. Read-only helpers for buy UI (later)
 
-When you add buy, use gasless `createBuyRequestFor(user, ...)` on `TradeManager` (see [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md)).
+When you add buy, use gasless `createBuyRequestFor(user, ...)` on `TradeManager` (see [FRONTEND_BUY_FLOW.md](./FRONTEND_BUY_FLOW.md)).
 
 ```ts
 await governance.minimumBuyGoldValueInUg();
