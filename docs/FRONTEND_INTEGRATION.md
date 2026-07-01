@@ -30,6 +30,7 @@ import { keccak256, toUtf8Bytes, id } from "ethers";
 const GOLD   = keccak256(toUtf8Bytes("GOLD"));
 const SILVER = keccak256(toUtf8Bytes("SILVER"));
 const AP1    = keccak256(toUtf8Bytes("AP1"));
+const AP2    = keccak256(toUtf8Bytes("AP2"));
 ```
 
 ### Assets
@@ -41,13 +42,14 @@ const AP1    = keccak256(toUtf8Bytes("AP1"));
 
 ### Providers
 
-| Label (slug) | `providerId` (`bytes32`) | Display name (on-chain) |
-|--------------|--------------------------|-------------------------|
-| `AP1` | `0x18b117340645cfb38a7414f6a51f090965f4e22ead292d9dad633e05e91ff811` | **MMTC** |
+| Label (slug) | `providerId` (`bytes32`) | Display name (on-chain) | Operator wallet |
+|--------------|--------------------------|-------------------------|-----------------|
+| `AP1` | `0x18b117340645cfb38a7414f6a51f090965f4e22ead292d9dad633e05e91ff811` | **MMTC** | `0x4f30c25BCf96fa0c93e135ED73baA78D5a27999D` |
+| `AP2` | `0x8e02c38093eb2f04539e87bd66824c36f9a6e087fe915d21716d4c6d77434c62` | **amrapali** | `0x3E12A663687CD93d33447945C35c42dD598A6E3A` |
 
-**Important:** The **slug** is `AP1` — frontend must pass `keccak256("AP1")` as `providerId` in all `TradeManager` calls. The string **`"MMTC"`** is only the display name from `getProvider(AP1)`; it is **not** the ID (do not use `keccak256("MMTC")` unless that provider is registered separately).
+**Important:** Pass `keccak256("AP1")` or `keccak256("AP2")` as `providerId` in all `TradeManager` calls. Display names (**MMTC**, **amrapali**) come from `getProvider(providerId)` only — do not hash the display name unless that slug is registered separately.
 
-**Registered on Amoy:** assets `GOLD`, `SILVER` · one active provider: slug **`AP1`** (name **MMTC**). Operator wallet: `0x4f30c25BCf96fa0c93e135ED73baA78D5a27999D`.
+**Registered on Amoy:** assets `GOLD`, `SILVER` · providers **`AP1`** (MMTC) and **`AP2`** (amrapali), both supporting GOLD and SILVER.
 
 **Amounts:** always **micrograms (µg)**. `1 gram = 1_000_000` µg.
 
@@ -200,7 +202,7 @@ Call `setAssetRouting` again anytime to **update** sell/redeem addresses for an 
 
 User buys debit `AssetLedger.providerPoolBalance(assetId, providerId)`. Mint first.
 
-**Approvals:** VP → AT (in order)  
+**Approvals:** AT only (`vpRequiredForApprovals` is `false` on Amoy — no VP step for Mint/Burn/Redeem)  
 **Execute:** admin `executeRequest(requestId)`
 
 ### Step 1 — AP proposes mint (gasless)
@@ -237,30 +239,26 @@ const { /* requestId from events or return */ } = await TreSori().writeGaslessMp
 
 **Silver example:** same call with `SILVER` instead of `GOLD`.
 
-### Step 2 — VP approves (gasless)
+### Step 2 — AT approves (gasless)
 
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: TRADE_MANAGER,
   functionName: "approveRequestFor",
-  params: [vpWallet, requestId],
+  params: [atWallet, requestId],
   abi: ["function approveRequestFor(address approver,uint256 requestId)"],
-  fromAddress: vpWallet,
+  fromAddress: atWallet,
   chain, clientShare, sessionId, rpcUrl,
 });
 ```
 
-### Step 3 — AT approves (gasless)
-
-Same as step 2 with `atWallet`.
-
-### Step 4 — Admin executes (normal tx)
+### Step 3 — Admin executes (normal tx)
 
 ```ts
 await tradeManager.executeRequest(requestId); // admin signer, paid gas
 ```
 
-### Step 5 — Verify pool (read)
+### Step 4 — Verify pool (read)
 
 ```ts
 await assetLedger.providerPoolBalance(GOLD, AP1); // should be >= buy size
