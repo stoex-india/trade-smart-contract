@@ -5,12 +5,9 @@ import {Script, console2} from "forge-std/Script.sol";
 
 import {TradeManager} from "../src/TradeManager.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
-import {GoldNFT} from "../src/GoldNFT.sol";
+import {AssetLedger} from "../src/AssetLedger.sol";
 
 /// @title SetTrustedForwarder
-/// @notice Rotates trusted forwarder on all ERC-2771-aware contracts.
-/// @dev Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `WHITELIST_REGISTRY`, `GOLD_NFT`,
-/// `RELAYER_SMART_CONTRACT` (ERC-2771 trusted forwarder — the contract that directly calls our proxies).
 contract SetTrustedForwarder is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -21,7 +18,7 @@ contract SetTrustedForwarder is Script {
 
         TradeManager(vm.envAddress("TRADE_MANAGER")).setTrustedForwarder(forwarder);
         WhitelistRegistry(vm.envAddress("WHITELIST_REGISTRY")).setTrustedForwarder(forwarder);
-        GoldNFT(vm.envAddress("GOLD_NFT")).setTrustedForwarder(forwarder);
+        AssetLedger(vm.envAddress("ASSET_LEDGER")).setTrustedForwarder(forwarder);
 
         vm.stopBroadcast();
 

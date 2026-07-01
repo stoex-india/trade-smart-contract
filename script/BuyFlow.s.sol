@@ -8,7 +8,6 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 import {RelayerScript} from "./helpers/RelayerScript.sol";
 
 /// @title BuyFlow
-/// @notice Buy flow: relayer calls `createBuyRequestFor` — credits µg from AP pool (no admin execute).
 contract BuyFlow is RelayerScript {
     bytes32 private constant _DEFAULT_PAYMENT_REF = 0x4255592d5245462d303031000000000000000000000000000000000000000000;
 
@@ -18,13 +17,16 @@ contract BuyFlow is RelayerScript {
         address user = vm.envAddress("BUY_USER");
         uint256 relayerPk = _relayerPk();
 
-        uint256 weightUg = vm.envOr("BUY_WEIGHT_UG", uint256(1_000_000)); // default 1 g
+        bytes32 assetId = _envLabelBytes32("ASSET_LABEL", "GOLD");
+        bytes32 providerId = _envLabelBytes32("PROVIDER_LABEL", "AP1");
+        uint256 weightUg = vm.envOr("BUY_WEIGHT_UG", uint256(1_000_000));
         bytes32 paymentRef = vm.envOr("BUY_PAYMENT_REF", _DEFAULT_PAYMENT_REF);
         uint256 fiatValue = vm.envOr("BUY_FIAT_VALUE", uint256(1));
         bytes32 txDetailsHash = vm.envOr("BUY_TX_DETAILS_HASH", bytes32(0));
 
         vm.startBroadcast(relayerPk);
-        uint256 requestId = trade.createBuyRequestFor(user, weightUg, fiatValue, paymentRef, txDetailsHash);
+        uint256 requestId =
+            trade.createBuyRequestFor(user, assetId, providerId, weightUg, fiatValue, paymentRef, txDetailsHash);
         vm.stopBroadcast();
 
         console2.log("Buy request completed:", requestId);

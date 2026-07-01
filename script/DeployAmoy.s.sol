@@ -6,107 +6,154 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {GovernanceConfig} from "../src/GovernanceConfig.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
-import {GoldNFT} from "../src/GoldNFT.sol";
+import {AssetRegistry} from "../src/AssetRegistry.sol";
+import {AssetProviderRegistry} from "../src/AssetProviderRegistry.sol";
+import {AssetLedger} from "../src/AssetLedger.sol";
 import {EscrowVault} from "../src/EscrowVault.sol";
 import {TimelockController} from "../src/TimelockController.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 import {StoexRoles} from "../src/libraries/StoexRoles.sol";
+import {StoexIds} from "../src/libraries/StoexIds.sol";
 
-/// @notice UUPS deployment for Polygon Amoy. Example:
-/// `forge script script/DeployAmoy.s.sol:DeployAmoy --rpc-url amoy --broadcast`
-/// @dev `PRIVATE_KEY` = **deployer** (temporary; no admin rights until `setInitialAdmin`). `INITIAL_ADMIN` = operations admin (defaults to deployer).
-/// If `INITIAL_ADMIN` != deployer, this script only wires routing when you re-run with deployer equal to `INITIAL_ADMIN`, or use `WireProxiesAdmin.s.sol` with the admin key.
+/// @notice UUPS deployment for Polygon Amoy.
+/// @dev Phase 1 (deployer key): deploy proxies + `setInitialAdmin`.
+///      Phase 2 (admin key): register assets/providers + wire — same tx when `INITIAL_ADMIN == deployer`,
+///      or run `ConfigureDeployment.s.sol` with admin `PRIVATE_KEY` when they differ.
 contract DeployAmoy is Script {
+    struct Deployment {
+        address gov;
+        address registry;
+        address assetReg;
+        address providerReg;
+        address ledger;
+        address escrow;
+        address timelock;
+        address trade;
+    }
+
     function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(pk);
+        uint256 deployerPk = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPk);
         address initialAdmin = vm.envOr("INITIAL_ADMIN", deployer);
-        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", initialAdmin);
-        address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
-        address vaultBk = vm.envOr("VAULT_BOOKKEEPING", initialAdmin);
-        // Tresori Relayer = ERC-2771 trusted forwarder (must be msg.sender on gasless inner calls).
         address trustedForwarder = vm.envAddress("RELAYER_SMART_CONTRACT");
         if (trustedForwarder == address(0)) revert("RELAYER_SMART_CONTRACT is zero");
 
-        vm.startBroadcast(pk);
+        vm.startBroadcast(deployerPk);
+        Deployment memory d = _deployProxies(deployer, trustedForwarder);
+        _setInitialAdmins(d, initialAdmin);
+        vm.stopBroadcast();
 
-        address gov;
-        {
-            GovernanceConfig impl = new GovernanceConfig();
-            gov = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (deployer))));
+        if (initialAdmin == deployer) {
+            uint256 adminPk = vm.envOr("ADMIN_PRIVATE_KEY", deployerPk);
+            vm.startBroadcast(adminPk);
+            _configureDeployment(d, initialAdmin, trustedForwarder);
+            vm.stopBroadcast();
+        } else {
+            console2.log("INITIAL_ADMIN != deployer: run ConfigureDeployment.s.sol with admin PRIVATE_KEY");
         }
 
-        address registry;
+        _logAddresses(d, trustedForwarder, initialAdmin);
+    }
+
+    function _deployProxies(address deployer, address trustedForwarder) private returns (Deployment memory d) {
+        {
+            GovernanceConfig impl = new GovernanceConfig();
+            d.gov = address(new ERC1967Proxy(address(impl), abi.encodeCall(GovernanceConfig.initialize, (deployer))));
+        }
         {
             WhitelistRegistry impl = new WhitelistRegistry();
-            registry = address(
+            d.registry = address(
                 new ERC1967Proxy(address(impl), abi.encodeCall(WhitelistRegistry.initialize, (deployer, trustedForwarder)))
             );
         }
-
-        address gold;
         {
-            GoldNFT impl = new GoldNFT();
-            gold = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(GoldNFT.initialize, (deployer, registry, trustedForwarder)))
+            AssetRegistry impl = new AssetRegistry();
+            d.assetReg = address(new ERC1967Proxy(address(impl), abi.encodeCall(AssetRegistry.initialize, (deployer))));
+        }
+        {
+            AssetProviderRegistry impl = new AssetProviderRegistry();
+            d.providerReg = address(
+                new ERC1967Proxy(
+                    address(impl), abi.encodeCall(AssetProviderRegistry.initialize, (deployer, d.assetReg))
+                )
             );
         }
-
-        address escrow;
+        {
+            AssetLedger impl = new AssetLedger();
+            d.ledger = address(
+                new ERC1967Proxy(address(impl), abi.encodeCall(AssetLedger.initialize, (deployer, d.registry, trustedForwarder)))
+            );
+        }
         {
             EscrowVault impl = new EscrowVault();
-            escrow = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (deployer, gold)))
+            d.escrow = address(
+                new ERC1967Proxy(address(impl), abi.encodeCall(EscrowVault.initialize, (deployer, d.ledger)))
             );
         }
-
-        address timelock;
         {
             TimelockController impl = new TimelockController();
-            timelock = address(
+            d.timelock = address(
                 new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (deployer)))
             );
         }
-
-        address trade;
         {
             TradeManager impl = new TradeManager();
-            trade = address(
+            d.trade = address(
                 new ERC1967Proxy(
                     address(impl),
                     abi.encodeCall(
-                        TradeManager.initialize, (deployer, gov, registry, gold, escrow, timelock, trustedForwarder)
+                        TradeManager.initialize,
+                        (deployer, d.gov, d.registry, d.ledger, d.escrow, d.timelock, d.assetReg, d.providerReg, trustedForwarder)
                     )
                 )
             );
         }
+    }
 
-        GovernanceConfig(gov).setInitialAdmin(initialAdmin);
-        WhitelistRegistry(registry).setInitialAdmin(initialAdmin);
-        GoldNFT(gold).setInitialAdmin(initialAdmin);
-        EscrowVault(escrow).setInitialAdmin(initialAdmin);
-        TimelockController(timelock).setInitialAdmin(initialAdmin);
-        TradeManager(trade).setInitialAdmin(initialAdmin);
+    function _setInitialAdmins(Deployment memory d, address initialAdmin) private {
+        GovernanceConfig(d.gov).setInitialAdmin(initialAdmin);
+        WhitelistRegistry(d.registry).setInitialAdmin(initialAdmin);
+        AssetRegistry(d.assetReg).setInitialAdmin(initialAdmin);
+        AssetProviderRegistry(d.providerReg).setInitialAdmin(initialAdmin);
+        AssetLedger(d.ledger).setInitialAdmin(initialAdmin);
+        EscrowVault(d.escrow).setInitialAdmin(initialAdmin);
+        TimelockController(d.timelock).setInitialAdmin(initialAdmin);
+        TradeManager(d.trade).setInitialAdmin(initialAdmin);
+    }
 
-        if (initialAdmin == deployer) {
-            TradeManager(trade).setRoutingAddresses(apPayout, rSink, vaultBk);
-            EscrowVault(escrow).setTradeManager(trade);
-            TimelockController(timelock).setTradeManager(trade);
-            GoldNFT(gold).grantRole(StoexRoles.TRADE_MANAGER_ROLE, trade);
-            WhitelistRegistry(registry).setTradeManager(trade);
-        } else {
-            console2.log("INITIAL_ADMIN != deployer: run WireProxiesAdmin.s.sol with admin PRIVATE_KEY");
-        }
+    function _configureDeployment(Deployment memory d, address initialAdmin, address) private {
+        address apOperator = vm.envOr("ROLE_AP", initialAdmin);
+        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", apOperator);
+        address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
+        bytes32 providerId = keccak256(bytes(vm.envOr("DEFAULT_PROVIDER_LABEL", string("AP1"))));
 
-        vm.stopBroadcast();
+        AssetRegistry(d.assetReg).registerAsset(StoexIds.GOLD, "AU", "Gold", 6);
+        AssetRegistry(d.assetReg).registerAsset(StoexIds.SILVER, "AG", "Silver", 6);
 
-        console2.log("GovernanceConfig", gov);
+        AssetProviderRegistry pr = AssetProviderRegistry(d.providerReg);
+        pr.registerProvider(providerId, vm.envOr("DEFAULT_PROVIDER_NAME", string("Default AP")));
+        pr.addProviderOperator(providerId, apOperator);
+        pr.setProviderAsset(providerId, StoexIds.GOLD, true);
+        pr.setProviderAsset(providerId, StoexIds.SILVER, true);
+        pr.setAssetRouting(providerId, StoexIds.GOLD, apPayout, rSink);
+        pr.setAssetRouting(providerId, StoexIds.SILVER, apPayout, rSink);
+
+        EscrowVault(d.escrow).setTradeManager(d.trade);
+        TimelockController(d.timelock).setTradeManager(d.trade);
+        AssetLedger(d.ledger).grantRole(StoexRoles.TRADE_MANAGER_ROLE, d.trade);
+        WhitelistRegistry(d.registry).setTradeManager(d.trade);
+    }
+
+    function _logAddresses(Deployment memory d, address trustedForwarder, address initialAdmin) private view {
+        console2.log("GovernanceConfig", d.gov);
+        console2.log("AssetRegistry", d.assetReg);
+        console2.log("AssetProviderRegistry", d.providerReg);
+        console2.log("WhitelistRegistry", d.registry);
+        console2.log("AssetLedger", d.ledger);
+        console2.log("EscrowVault", d.escrow);
+        console2.log("TimelockController", d.timelock);
+        console2.log("TradeManager", d.trade);
         console2.log("Trusted forwarder", trustedForwarder);
-        console2.log("WhitelistRegistry", registry);
-        console2.log("GoldNFT", gold);
-        console2.log("EscrowVault", escrow);
-        console2.log("TimelockController", timelock);
-        console2.log("TradeManager", trade);
         console2.log("INITIAL_ADMIN", initialAdmin);
     }
 }

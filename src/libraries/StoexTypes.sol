@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — StoexTypes
 /// @notice Shared **enums** and **structs** for the STOEX India Gold tokenization EVM stack (PRD v2.0).
-/// @dev Used by `TradeManager`, `GoldNFT`, `WhitelistRegistry`, and interfaces. Request lifecycle enums mirror the PRD; `PAPApproved` models the Physical Asset Provider step on redeem.
+/// @dev Used by `TradeManager`, `AssetLedger`, `WhitelistRegistry`, and interfaces.
 library StoexTypes {
     enum KYCStatus {
         Pending,
@@ -66,14 +66,23 @@ library StoexTypes {
     }
 
     struct MintLotMeta {
+        bytes32 assetId;
+        bytes32 providerId;
         bytes32 vaultReceiptId;
         bytes32 batchId;
         uint16 purity;
         uint256 depositTimestamp;
-        address apId;
         address vpId;
         uint256 lockUntilTs;
         uint256 amountUg;
+    }
+
+    struct AssetConfig {
+        string symbol;
+        string name;
+        bool active;
+        bool registered;
+        uint8 precision;
     }
 
     struct UserProfile {
@@ -88,9 +97,31 @@ library StoexTypes {
     }
 
     struct TxRecord {
+        bytes32 assetId;
+        bytes32 providerId;
         TxType txType;
         uint256 amountUg;
         uint256 timestamp;
         uint256 requestId;
+    }
+
+    struct TradeRequest {
+        bytes32 assetId;
+        bytes32 providerId;
+        RequestType requestType;
+        RequestStatus status;
+        address initiator;
+        address targetUser;
+        uint256 amountUg;
+        bytes32 paymentRefId;
+        bytes32 vaultReceiptId;
+        string reason;
+        uint256 createdAt;
+        uint256 expiresAt;
+        uint256 approvalsDone;
+        MintLotMeta mintLot;
+        bool escrowLocked;
+        uint256 fiatValue;
+        bytes32 txDetailsHash;
     }
 }

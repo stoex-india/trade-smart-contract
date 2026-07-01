@@ -6,19 +6,11 @@ import {Script, console2} from "forge-std/Script.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 import {GovernanceConfig} from "../src/GovernanceConfig.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
-import {GoldNFT} from "../src/GoldNFT.sol";
+import {AssetLedger} from "../src/AssetLedger.sol";
 import {TimelockController} from "../src/TimelockController.sol";
 import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 
 /// @title ConfigureRoles
-/// @notice Grants operational roles after deployment. Run with `PRIVATE_KEY` for the **operations admin** (`DEFAULT_ADMIN_ROLE` after `setInitialAdmin`).
-/// @dev Example:
-/// `forge script script/ConfigureRoles.s.sol:ConfigureRoles --rpc-url amoy --broadcast`
-///
-/// Required env: `PRIVATE_KEY`, `TRADE_MANAGER`, `GOVERNANCE_CONFIG`, `WHITELIST_REGISTRY`, `GOLD_NFT`, `TIMELOCK_CONTROLLER`
-/// Optional role holders (omit or set to zero address to skip): `ROLE_AP`, `ROLE_VP`, `ROLE_AT`, `ROLE_PAP`, `ROLE_AUDITOR`
-/// Optional: `RELAYER_SMART_CONTRACT` to set ERC-2771 trusted forwarder on gasless-enabled contracts.
-/// @dev Investor onboarding (`registerUserFor` / `verifyKYC` / `USER_ROLE`) is intentionally handled by `OnboardInvestors.s.sol`.
 contract ConfigureRoles is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -27,7 +19,7 @@ contract ConfigureRoles is Script {
         TradeManager trade = TradeManager(vm.envAddress("TRADE_MANAGER"));
         GovernanceConfig gov = GovernanceConfig(vm.envAddress("GOVERNANCE_CONFIG"));
         WhitelistRegistry registry = WhitelistRegistry(vm.envAddress("WHITELIST_REGISTRY"));
-        GoldNFT gold = GoldNFT(vm.envAddress("GOLD_NFT"));
+        AssetLedger ledger = AssetLedger(vm.envAddress("ASSET_LEDGER"));
         TimelockController timelock = TimelockController(vm.envAddress("TIMELOCK_CONTROLLER"));
 
         address ap = vm.envOr("ROLE_AP", address(0));
@@ -46,15 +38,15 @@ contract ConfigureRoles is Script {
                 registry.setTrustedForwarder(forwarder);
                 console2.log("WhitelistRegistry trusted forwarder updated", forwarder);
             }
-            if (gold.trustedForwarder() != forwarder) {
-                gold.setTrustedForwarder(forwarder);
-                console2.log("GoldNFT trusted forwarder updated", forwarder);
+            if (ledger.trustedForwarder() != forwarder) {
+                ledger.setTrustedForwarder(forwarder);
+                console2.log("AssetLedger trusted forwarder updated", forwarder);
             }
         }
 
         if (ap != address(0)) {
             if (!trade.hasRole(StoexRoles.AP_ROLE, ap)) trade.grantRole(StoexRoles.AP_ROLE, ap);
-            if (!gold.hasRole(StoexRoles.AP_ROLE, ap)) gold.grantRole(StoexRoles.AP_ROLE, ap);
+            if (!ledger.hasRole(StoexRoles.AP_ROLE, ap)) ledger.grantRole(StoexRoles.AP_ROLE, ap);
             if (!timelock.hasRole(StoexRoles.AP_ROLE, ap)) timelock.grantRole(StoexRoles.AP_ROLE, ap);
         }
         if (vp != address(0) && !trade.hasRole(StoexRoles.VP_ROLE, vp)) trade.grantRole(StoexRoles.VP_ROLE, vp);

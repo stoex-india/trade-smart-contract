@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title STOEX Gold — GovernanceConfig
-/// @notice Single source of truth for **approval sequencing**, **volume limits**, **request TTL**, and **display precision** (Technical PRD v2.0).
-/// @dev UUPS upgradeable. Role model:
-/// - `DEFAULT_ADMIN_ROLE`: upgrade authority (`_authorizeUpgrade`) and role administration.
-/// - `AT_ROLE` (`StoexRoles.AT_ROLE`): Asset Trustee — may change any policy parameter and approval matrices.
-/// @notice Gold **amounts** (caps, holdings, lot sizes) are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`. `goldPrecision` is the off-chain decimal places when displaying grams (default 6).
+/// @title STOEX — GovernanceConfig
+/// @notice Approval sequencing, per-asset volume limits, request TTL, and display precision.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
+import {StoexIds} from "./libraries/StoexIds.sol";
 
 contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgradeable {
     uint8 public version;
@@ -20,33 +17,29 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     mapping(StoexTypes.RequestType => bytes32[]) private _approvalPolicy;
 
     uint256 public requestExpiryDuration;
-    uint256 public dailyBuyCap;
-    uint256 public dailySellCap;
     uint256 public minRedeemAmountUg;
     uint256 public maxAmountPerTx;
     uint256 public defaultTimelockDuration;
-    uint8 public goldPrecision;
+    uint8 public defaultPrecision;
 
-    /// @notice When false, `VP_ROLE` steps are omitted from approval policies for Redeem, Mint, and Burn (read via `getApprovalPolicy`).
+    mapping(bytes32 assetId => uint256) private _dailyBuyCap;
+    mapping(bytes32 assetId => uint256) private _dailySellCap;
+    mapping(bytes32 assetId => uint256) private _minimumBuyValueInUg;
+    mapping(bytes32 assetId => uint8) private _assetPrecision;
+
     bool public vpRequiredForApprovals;
-
-    /// @notice Max cumulative INR notional (minor units, e.g. paise 1/100 INR) for non-KYC buy path (`WhitelistRegistry.isEligibleForNonKycUser`).
     uint256 public nonKycMaxBuyFiatAmount;
-
-    /// @notice Minimum buy size in **micrograms**; admin may set to 0 to disable the floor (not recommended). Enforced on every `createBuyRequest`.
-    uint256 public minimumBuyGoldValueInUg;
 
     event PolicyUpdated(string parameter, bytes32 key);
     event VpRequirementChanged(bool required);
     event NonKycMaxBuyFiatAmountChanged(uint256 amount);
-    event MinimumBuyGoldValueInUgChanged(uint256 valueUg);
+    event AssetPolicySeeded(bytes32 indexed assetId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    /// @notice One-time init: records `deployer` (must call `setInitialAdmin`), default caps/TTL from PRD, and default approval policies per `RequestType`.
     function initialize(address deployer_) external initializer {
         if (deployer_ == address(0)) revert ZeroAddress();
 
@@ -54,25 +47,31 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
 
-        version = 1;
+        version = 2;
         vpRequiredForApprovals = true;
 
         requestExpiryDuration = 7 days;
-        // Amounts in micrograms (1 kg = 1_000_000_000 µg)
         uint256 ugPerKg = 1_000_000_000;
-        dailyBuyCap = 10 * ugPerKg;
-        dailySellCap = 5 * ugPerKg;
         nonKycMaxBuyFiatAmount = 50_000_000;
-        minRedeemAmountUg = 10_000_000; // 10 g
-        maxAmountPerTx = 1 * ugPerKg; // 1 kg
+        minRedeemAmountUg = 10_000_000;
+        maxAmountPerTx = 1 * ugPerKg;
         defaultTimelockDuration = 0;
-        goldPrecision = 6;
-        minimumBuyGoldValueInUg = 1_000; // 1 mg
+        defaultPrecision = 6;
+
+        _seedAssetPolicy(StoexIds.GOLD, 10 * ugPerKg, 5 * ugPerKg, 1_000);
+        _seedAssetPolicy(StoexIds.SILVER, 10 * ugPerKg, 5 * ugPerKg, 1_000);
 
         _setDefaultPolicies();
     }
 
-    /// @notice Toggle whether Verifying Party (`VP_ROLE`) approval is required for Redeem, Mint, and Burn flows.
+    function _seedAssetPolicy(bytes32 assetId, uint256 buyCap, uint256 sellCap, uint256 minBuyUg) private {
+        _dailyBuyCap[assetId] = buyCap;
+        _dailySellCap[assetId] = sellCap;
+        _minimumBuyValueInUg[assetId] = minBuyUg;
+        _assetPrecision[assetId] = defaultPrecision;
+        emit AssetPolicySeeded(assetId);
+    }
+
     function setVpRequiredForApprovals(bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
         vpRequiredForApprovals = required;
         emit VpRequirementChanged(required);
@@ -83,9 +82,41 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         emit NonKycMaxBuyFiatAmountChanged(amount);
     }
 
-    function setMinimumBuyGoldValueInUg(uint256 valueUg) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        minimumBuyGoldValueInUg = valueUg;
-        emit MinimumBuyGoldValueInUgChanged(valueUg);
+    function setDailyCapForAsset(bytes32 assetId, StoexTypes.RequestType rt, uint256 cap)
+        external
+        onlyRole(StoexRoles.AT_ROLE)
+    {
+        if (rt == StoexTypes.RequestType.Buy) _dailyBuyCap[assetId] = cap;
+        else if (rt == StoexTypes.RequestType.Sell) _dailySellCap[assetId] = cap;
+        else revert InvalidRequestType();
+        emit PolicyUpdated("dailyCap", assetId);
+    }
+
+    function setMinimumBuyValueInUg(bytes32 assetId, uint256 valueUg) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _minimumBuyValueInUg[assetId] = valueUg;
+        emit PolicyUpdated("minimumBuyValueInUg", assetId);
+    }
+
+    function setAssetPrecision(bytes32 assetId, uint8 decimals_) external onlyRole(StoexRoles.AT_ROLE) {
+        _assetPrecision[assetId] = decimals_;
+        emit PolicyUpdated("assetPrecision", assetId);
+    }
+
+    function dailyBuyCap(bytes32 assetId) external view returns (uint256) {
+        return _dailyBuyCap[assetId];
+    }
+
+    function dailySellCap(bytes32 assetId) external view returns (uint256) {
+        return _dailySellCap[assetId];
+    }
+
+    function minimumBuyValueInUg(bytes32 assetId) external view returns (uint256) {
+        return _minimumBuyValueInUg[assetId];
+    }
+
+    function assetPrecision(bytes32 assetId) external view returns (uint8) {
+        uint8 p = _assetPrecision[assetId];
+        return p == 0 ? defaultPrecision : p;
     }
 
     function _setDefaultPolicies() private {
@@ -110,20 +141,12 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         _approvalPolicy[StoexTypes.RequestType.Burn].push(StoexRoles.AT_ROLE);
     }
 
-    /// @notice Replace the ordered approval role list for `rt`. **Buy** is settled automatically in `TradeManager.createBuyRequest`; this policy is unused for Buy unless you fork behavior off-chain.
     function setApprovalPolicy(StoexTypes.RequestType rt, bytes32[] calldata roles) external onlyRole(StoexRoles.AT_ROLE) {
         delete _approvalPolicy[rt];
         for (uint256 i = 0; i < roles.length; i++) {
             _approvalPolicy[rt].push(roles[i]);
         }
         emit PolicyUpdated("approvalPolicy", bytes32(uint256(uint8(rt))));
-    }
-
-    function setDailyCap(StoexTypes.RequestType rt, uint256 cap) external onlyRole(StoexRoles.AT_ROLE) {
-        if (rt == StoexTypes.RequestType.Buy) dailyBuyCap = cap;
-        else if (rt == StoexTypes.RequestType.Sell) dailySellCap = cap;
-        else revert InvalidRequestType();
-        emit PolicyUpdated("dailyCap", bytes32(uint256(uint8(rt))));
     }
 
     function setMinRedeemAmountUg(uint256 amountUg) external onlyRole(StoexRoles.AT_ROLE) {
@@ -144,11 +167,6 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     function setDefaultTimelockDuration(uint256 seconds_) external onlyRole(StoexRoles.AT_ROLE) {
         defaultTimelockDuration = seconds_;
         emit PolicyUpdated("defaultTimelockDuration", bytes32(0));
-    }
-
-    function setGoldPrecision(uint8 decimals_) external onlyRole(StoexRoles.AT_ROLE) {
-        goldPrecision = decimals_;
-        emit PolicyUpdated("goldPrecision", bytes32(0));
     }
 
     function getApprovalPolicy(StoexTypes.RequestType rt) external view returns (bytes32[] memory) {
@@ -173,6 +191,8 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    uint256[40] private __gap;
 
     error ZeroAddress();
     error InvalidRequestType();

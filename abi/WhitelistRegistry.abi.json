@@ -658,10 +658,10 @@
   },
   {
     "type": "function",
-    "name": "verifyKYC",
+    "name": "verifyKYCFor",
     "inputs": [
       {
-        "name": "wallet",
+        "name": "user",
         "type": "address",
         "internalType": "address"
       }
@@ -1122,6 +1122,11 @@
   {
     "type": "error",
     "name": "InvalidRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KycNotPending",
     "inputs": []
   },
   {

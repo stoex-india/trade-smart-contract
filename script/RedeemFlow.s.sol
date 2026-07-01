@@ -8,7 +8,6 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 import {RelayerScript} from "./helpers/RelayerScript.sol";
 
 /// @title RedeemFlow
-/// @notice PRD redeem flow: relayer relays USER create -> AP/VP/PAP/AT approve -> ADMIN execute.
 contract RedeemFlow is RelayerScript {
     bytes32 private constant _DEFAULT_DELIVERY_REF = 0x52454445454d2d5245462d303031000000000000000000000000000000000000;
 
@@ -28,11 +27,13 @@ contract RedeemFlow is RelayerScript {
         address papAddr = vm.addr(papPk);
         address atAddr = vm.addr(atPk);
 
+        bytes32 assetId = _envLabelBytes32("ASSET_LABEL", "GOLD");
+        bytes32 providerId = _envLabelBytes32("PROVIDER_LABEL", "AP1");
         uint256 amountUg = vm.envOr("REDEEM_AMOUNT_UG", uint256(1_000_000));
         bytes32 deliveryRef = vm.envOr("REDEEM_DELIVERY_REF", _DEFAULT_DELIVERY_REF);
 
         vm.startBroadcast(relayerPk);
-        uint256 requestId = trade.createRedeemRequestFor(user, amountUg, deliveryRef);
+        uint256 requestId = trade.createRedeemRequestFor(user, assetId, providerId, amountUg, deliveryRef);
         trade.approveRequestFor(apAddr, requestId);
         trade.approveRequestFor(vpAddr, requestId);
         trade.approveRequestFor(papAddr, requestId);

@@ -63,13 +63,39 @@
   },
   {
     "type": "function",
-    "name": "assetProviderPayout",
+    "name": "assetLedger",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address",
-        "internalType": "address"
+        "internalType": "contract IAssetLedger"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "assetProviderRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IAssetProviderRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "assetRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IAssetRegistry"
       }
     ],
     "stateMutability": "view"
@@ -121,6 +147,16 @@
         "internalType": "address"
       },
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "weightUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -160,6 +196,16 @@
         "internalType": "address"
       },
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -187,6 +233,16 @@
         "name": "user",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "amountUg",
@@ -345,8 +401,18 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct TradeManager.TradeRequest",
+        "internalType": "struct StoexTypes.TradeRequest",
         "components": [
+          {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
           {
             "name": "requestType",
             "type": "uint8",
@@ -408,6 +474,16 @@
             "internalType": "struct StoexTypes.MintLotMeta",
             "components": [
               {
+                "name": "assetId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
+                "name": "providerId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
                 "name": "vaultReceiptId",
                 "type": "bytes32",
                 "internalType": "bytes32"
@@ -426,11 +502,6 @@
                 "name": "depositTimestamp",
                 "type": "uint256",
                 "internalType": "uint256"
-              },
-              {
-                "name": "apId",
-                "type": "address",
-                "internalType": "address"
               },
               {
                 "name": "vpId",
@@ -503,19 +574,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "goldNFT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IGoldNFT"
       }
     ],
     "stateMutability": "view"
@@ -608,7 +666,7 @@
         "internalType": "address"
       },
       {
-        "name": "goldNFT_",
+        "name": "assetLedger_",
         "type": "address",
         "internalType": "address"
       },
@@ -619,6 +677,16 @@
       },
       {
         "name": "timelockController_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetRegistry_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetProviderRegistry_",
         "type": "address",
         "internalType": "address"
       },
@@ -674,6 +742,16 @@
         "internalType": "address"
       },
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -708,6 +786,16 @@
         "internalType": "address"
       },
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -722,6 +810,16 @@
         "type": "tuple",
         "internalType": "struct StoexTypes.MintLotMeta",
         "components": [
+          {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
           {
             "name": "vaultReceiptId",
             "type": "bytes32",
@@ -741,11 +839,6 @@
             "name": "depositTimestamp",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "apId",
-            "type": "address",
-            "internalType": "address"
           },
           {
             "name": "vpId",
@@ -783,19 +876,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "redeemSink",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -861,46 +941,10 @@
   },
   {
     "type": "function",
-    "name": "routingConfigured",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setInitialAdmin",
     "inputs": [
       {
         "name": "admin",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRoutingAddresses",
-    "inputs": [
-      {
-        "name": "assetProviderPayout_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "redeemSink_",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "vaultBookkeeping_",
         "type": "address",
         "internalType": "address"
       }
@@ -1003,19 +1047,6 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "vaultBookkeeping",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1175,6 +1206,18 @@
         "internalType": "uint256"
       },
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "requestType",
         "type": "uint8",
         "indexed": false,
@@ -1183,7 +1226,7 @@
       {
         "name": "initiator",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
       },
       {
@@ -1414,7 +1457,7 @@
   },
   {
     "type": "error",
-    "name": "AlreadySet",
+    "name": "AssetNotSupported",
     "inputs": []
   },
   {
@@ -1439,7 +1482,7 @@
   },
   {
     "type": "error",
-    "name": "BelowMinBuyGold",
+    "name": "BelowMinBuy",
     "inputs": []
   },
   {
@@ -1476,33 +1519,6 @@
     "type": "error",
     "name": "DuplicateSigner",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignature",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ECDSAInvalidSignatureS",
-    "inputs": [
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1548,6 +1564,16 @@
   {
     "type": "error",
     "name": "FullyApproved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InactiveAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InactiveProvider",
     "inputs": []
   },
   {
@@ -1602,6 +1628,11 @@
   },
   {
     "type": "error",
+    "name": "NotProviderOperator",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotTrustedForwarder",
     "inputs": []
   },
@@ -1617,12 +1648,12 @@
   },
   {
     "type": "error",
-    "name": "ReentrancyGuardReentrantCall",
+    "name": "ProviderBindingConflict",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "RoutingNotSet",
+    "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
   {

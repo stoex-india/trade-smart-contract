@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {StoexTypes} from "../libraries/StoexTypes.sol";
 
 /// @title IWhitelistRegistry
-/// @notice Minimal read API for `GoldNFT` / `TradeManager` eligibility checks.
+/// @notice Minimal read API for `AssetLedger` / `TradeManager` eligibility checks.
 interface IWhitelistRegistry {
     /// @notice Full platform eligibility: KYC verified, whitelisted wallet, active, within risk policy.
     function isEligible(address wallet) external view returns (bool);

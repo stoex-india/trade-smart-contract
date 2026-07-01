@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title STOEX Gold — EscrowVault
-/// @notice **Logical escrow** over gold micrograms (not an ERC-20): tracks per-request locks so users cannot double-spend the same amount while sell/redeem requests are pending.
-/// @dev Only the `TradeManager` proxy address may `lockTokens` / `unlockTokens` / `releaseEscrow` (set once via `setTradeManager`).
-/// Invariant: sum of active locks per wallet ≤ `GoldNFT.userHolding(wallet)`. `getAvailableBalance` = holding minus locked.
+/// @title EscrowVault
+/// @notice Logical escrow over asset micrograms scoped by (assetId, providerId).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {StoexTypes} from "./libraries/StoexTypes.sol";
-import {IGoldNFT} from "./interfaces/IGoldNFT.sol";
+import {IAssetLedger} from "./interfaces/IAssetLedger.sol";
 
 contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgradeable {
     uint8 public version;
 
-    IGoldNFT public goldNFT;
+    IAssetLedger public assetLedger;
     address public tradeManager;
 
     struct EscrowLock {
         address user;
+        bytes32 assetId;
+        bytes32 providerId;
         uint256 amountUg;
         StoexTypes.EscrowReason reasonType;
         uint256 lockedAt;
@@ -27,9 +27,11 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     }
 
     mapping(uint256 => EscrowLock) private _locks;
-    mapping(address => uint256) private _lockedTotal;
+    mapping(address => mapping(bytes32 => mapping(bytes32 => uint256))) private _lockedTotal;
 
-    event TokensLocked(uint256 indexed requestId, address indexed user, uint256 amountUg, StoexTypes.EscrowReason reason);
+    event TokensLocked(
+        uint256 indexed requestId, address indexed user, bytes32 indexed assetId, bytes32 providerId, uint256 amountUg, StoexTypes.EscrowReason reason
+    );
     event TokensUnlocked(uint256 indexed requestId, address indexed user, uint256 amountUg);
     event EscrowReleased(uint256 indexed requestId, address indexed user, uint256 amountUg, address destination);
 
@@ -38,16 +40,15 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         _disableInitializers();
     }
 
-    function initialize(address deployer_, address goldNFT_) external initializer {
-        if (deployer_ == address(0) || goldNFT_ == address(0)) revert ZeroAddress();
+    function initialize(address deployer_, address assetLedger_) external initializer {
+        if (deployer_ == address(0) || assetLedger_ == address(0)) revert ZeroAddress();
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
-        goldNFT = IGoldNFT(goldNFT_);
-        version = 1;
+        assetLedger = IAssetLedger(assetLedger_);
+        version = 2;
     }
 
-    /// @dev One-time wire after TradeManager proxy is known.
     function setTradeManager(address tradeManager_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (tradeManager_ == address(0)) revert ZeroAddress();
         if (tradeManager != address(0)) revert AlreadySet();
@@ -63,24 +64,30 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (msg.sender != tradeManager) revert NotTradeManager();
     }
 
-    function lockTokens(address wallet, uint256 amountUg, StoexTypes.EscrowReason reason, uint256 requestId)
-        external
-        onlyTradeManager
-    {
+    function lockTokens(
+        address wallet,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        StoexTypes.EscrowReason reason,
+        uint256 requestId
+    ) external onlyTradeManager {
         if (_locks[requestId].user != address(0)) revert LockExists();
-        uint256 available = getAvailableBalance(wallet);
+        uint256 available = getAvailableBalance(wallet, assetId, providerId);
         if (amountUg > available) revert ExceedsAvailable();
 
         _locks[requestId] = EscrowLock({
             user: wallet,
+            assetId: assetId,
+            providerId: providerId,
             amountUg: amountUg,
             reasonType: reason,
             lockedAt: block.timestamp,
             released: false
         });
-        _lockedTotal[wallet] += amountUg;
+        _lockedTotal[wallet][assetId][providerId] += amountUg;
 
-        emit TokensLocked(requestId, wallet, amountUg, reason);
+        emit TokensLocked(requestId, wallet, assetId, providerId, amountUg, reason);
     }
 
     function unlockTokens(uint256 requestId) external onlyTradeManager {
@@ -89,7 +96,7 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (L.released) revert AlreadyReleased();
 
         L.released = true;
-        _lockedTotal[L.user] -= L.amountUg;
+        _lockedTotal[L.user][L.assetId][L.providerId] -= L.amountUg;
 
         emit TokensUnlocked(requestId, L.user, L.amountUg);
     }
@@ -101,33 +108,41 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         if (destination == address(0)) revert ZeroAddress();
 
         L.released = true;
-        _lockedTotal[L.user] -= L.amountUg;
+        _lockedTotal[L.user][L.assetId][L.providerId] -= L.amountUg;
 
         emit EscrowReleased(requestId, L.user, L.amountUg, destination);
     }
 
-    function getLockedAmount(address wallet) external view returns (uint256) {
-        return _lockedTotal[wallet];
+    function getLockedAmount(address wallet, bytes32 assetId, bytes32 providerId) external view returns (uint256) {
+        return _lockedTotal[wallet][assetId][providerId];
     }
 
-    function getAvailableBalance(address wallet) public view returns (uint256) {
-        uint256 bal = goldNFT.userHolding(wallet);
-        uint256 locked = _lockedTotal[wallet];
+    function getAvailableBalance(address wallet, bytes32 assetId, bytes32 providerId) public view returns (uint256) {
+        uint256 bal = assetLedger.userHolding(wallet, assetId, providerId);
+        uint256 locked = _lockedTotal[wallet][assetId][providerId];
         return bal > locked ? bal - locked : 0;
     }
 
     function getEscrowDetails(uint256 requestId)
         external
         view
-        returns (address user, uint256 amountUg, StoexTypes.EscrowReason reasonType, uint256 lockedAt, bool released)
+        returns (
+            address user,
+            bytes32 assetId,
+            bytes32 providerId,
+            uint256 amountUg,
+            StoexTypes.EscrowReason reasonType,
+            uint256 lockedAt,
+            bool released
+        )
     {
         EscrowLock storage L = _locks[requestId];
-        return (L.user, L.amountUg, L.reasonType, L.lockedAt, L.released);
+        return (L.user, L.assetId, L.providerId, L.amountUg, L.reasonType, L.lockedAt, L.released);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    uint256[49] private __gap;
+    uint256[47] private __gap;
 
     error ZeroAddress();
     error AlreadySet();
