@@ -1,17 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title STOEX Gold — TradeManager
-/// @notice **Central orchestrator** for PRD trade requests: **Buy** completes in `createBuyRequestFor` (auto credit, no admin execute). Other flows: propose → approvals → `executeRequest` (admin) **or** `executeWithCoSignatures` (EIP-712 batch).
-/// @dev UUPS upgradeable. Wiring:
-/// - Reads policies from `GovernanceConfig` (caps, expiry, approval order).
-/// - Checks `WhitelistRegistry.isEligible` / `isEligibleForNonKycUser` for user-facing operations.
-/// - Uses `EscrowVault` for sell/redeem pending locks; `TimelockController` blocks sell/redeem when wallet or any user lot is locked.
-/// - Mutates `GoldNFT` only via `TRADE_MANAGER_ROLE`.
-/// - `setRoutingAddresses` must be called once after deploy: `assetProviderPayout`, `redeemSink`, `vaultBookkeeping` (legacy routing slot; burn debits AP pool).
-/// **Gold amounts** in request structs and checks are **integer micrograms (µg)**. `1 gram = 1_000_000 µg`.
-/// **Roles on this contract**: grant `USER_ROLE` to investors for gasless `create*For`; `AP_ROLE` / `VP_ROLE` / `AT_ROLE` / `PAP_ROLE` for `approveRequestFor` (non-Buy); `DEFAULT_ADMIN_ROLE` for `executeRequest` (non-Buy) and upgrades.
-/// Gasless integrations call `*For` with explicit wallet/actor — Tresori relayer does not append ERC-2771 suffix bytes.
+/// @title TradeManager
+/// @notice Central orchestrator for multi-asset, multi-provider trade requests.
 import {StoexRelayerGate} from "./base/StoexRelayerGate.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
@@ -19,13 +10,15 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
+import {TradeManagerLib} from "./libraries/TradeManagerLib.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
 import {IGovernanceConfig} from "./interfaces/IGovernanceConfig.sol";
-import {IGoldNFT} from "./interfaces/IGoldNFT.sol";
+import {IAssetLedger} from "./interfaces/IAssetLedger.sol";
+import {IAssetRegistry} from "./interfaces/IAssetRegistry.sol";
+import {IAssetProviderRegistry} from "./interfaces/IAssetProviderRegistry.sol";
 import {IEscrowVault} from "./interfaces/IEscrowVault.sol";
 import {ITimelockController} from "./interfaces/ITimelockController.sol";
 
@@ -42,50 +35,21 @@ contract TradeManager is
 
     IGovernanceConfig public governance;
     IWhitelistRegistry public whitelistRegistry;
-    IGoldNFT public goldNFT;
+    IAssetLedger public assetLedger;
+    IAssetRegistry public assetRegistry;
+    IAssetProviderRegistry public assetProviderRegistry;
     IEscrowVault public escrowVault;
     ITimelockController public timelockController;
 
-    /// @dev PRD escrow routing: sell releases to asset provider; redeem to burn/sink address.
-    address public assetProviderPayout;
-    address public redeemSink;
-    /// @dev On-chain account (whitelisted) whose `userHolding` backs aggregate vault / burn adjustments.
-    address public vaultBookkeeping;
-
-    bool public routingConfigured;
     address private _trustedForwarderValue;
 
     uint256 public nextRequestId;
 
-    uint256 private _buyDay;
-    uint256 private _buyDayAmountUg;
-    uint256 private _sellDay;
-    uint256 private _sellDayAmountUg;
+    TradeManagerLib.DayCaps private _dayCaps;
 
-    struct TradeRequest {
-        StoexTypes.RequestType requestType;
-        StoexTypes.RequestStatus status;
-        address initiator;
-        address targetUser;
-        uint256 amountUg;
-        bytes32 paymentRefId;
-        bytes32 vaultReceiptId;
-        string reason;
-        uint256 createdAt;
-        uint256 expiresAt;
-        uint256 approvalsDone;
-        StoexTypes.MintLotMeta mintLot;
-        bool escrowLocked;
-        uint256 fiatValue;
-        bytes32 txDetailsHash;
-    }
-
-    mapping(uint256 => TradeRequest) private _requests;
+    mapping(uint256 => StoexTypes.TradeRequest) private _requests;
     mapping(uint256 => mapping(uint256 => bool)) private _stepApproved;
-
     mapping(uint256 => uint256) public coSignNonce;
-
-    /// @dev Cumulative executed buy `fiatValue` for non-KYC users (INR minor units); capped by `GovernanceConfig.nonKycMaxBuyFiatAmount`.
     mapping(address => uint256) private _nonKycFiatPurchased;
 
     bytes32 private constant CO_SIGN_TYPEHASH =
@@ -93,8 +57,10 @@ contract TradeManager is
 
     event RequestCreated(
         uint256 indexed requestId,
+        bytes32 indexed assetId,
+        bytes32 indexed providerId,
         StoexTypes.RequestType requestType,
-        address indexed initiator,
+        address initiator,
         uint256 amountUg,
         uint256 fiatValue
     );
@@ -114,34 +80,38 @@ contract TradeManager is
         address deployer_,
         address governance_,
         address whitelistRegistry_,
-        address goldNFT_,
+        address assetLedger_,
         address escrowVault_,
         address timelockController_,
+        address assetRegistry_,
+        address assetProviderRegistry_,
         address trustedForwarder_
     ) external initializer {
         if (
-            deployer_ == address(0) || governance_ == address(0) || whitelistRegistry_ == address(0) || goldNFT_ == address(0)
-                || escrowVault_ == address(0) || timelockController_ == address(0) || trustedForwarder_ == address(0)
+            deployer_ == address(0) || governance_ == address(0) || whitelistRegistry_ == address(0)
+                || assetLedger_ == address(0) || escrowVault_ == address(0) || timelockController_ == address(0)
+                || assetRegistry_ == address(0) || assetProviderRegistry_ == address(0) || trustedForwarder_ == address(0)
         ) revert ZeroAddress();
 
         __AccessControl_init();
         __Pausable_init();
         __ReentrancyGuard_init();
-        __EIP712_init("StoexGoldTrade", "1");
+        __EIP712_init("StoexTrade", "2");
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
 
         governance = IGovernanceConfig(governance_);
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
-        goldNFT = IGoldNFT(goldNFT_);
+        assetLedger = IAssetLedger(assetLedger_);
         escrowVault = IEscrowVault(escrowVault_);
         timelockController = ITimelockController(timelockController_);
+        assetRegistry = IAssetRegistry(assetRegistry_);
+        assetProviderRegistry = IAssetProviderRegistry(assetProviderRegistry_);
         _trustedForwarderValue = trustedForwarder_;
 
-        version = 1;
+        version = 2;
     }
 
-    /// @notice Updates the trusted ERC-2771 forwarder used for meta-transactions.
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (trustedForwarder_ == address(0)) revert ZeroAddress();
         _trustedForwarderValue = trustedForwarder_;
@@ -151,26 +121,10 @@ contract TradeManager is
         return _trustedForwarderValue;
     }
 
-    /// @notice Called only by `WhitelistRegistry` during user onboarding to grant trade `USER_ROLE`.
     function grantUserRoleFromRegistry(address user) external {
         if (msg.sender != address(whitelistRegistry)) revert NotWhitelistRegistry();
         if (user == address(0)) revert ZeroAddress();
         _grantRole(StoexRoles.USER_ROLE, user);
-    }
-
-    /// @dev One-time routing configuration (escrow release destinations and vault burn bookkeeping).
-    function setRoutingAddresses(address assetProviderPayout_, address redeemSink_, address vaultBookkeeping_)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        if (routingConfigured) revert AlreadySet();
-        if (assetProviderPayout_ == address(0) || redeemSink_ == address(0) || vaultBookkeeping_ == address(0)) {
-            revert ZeroAddress();
-        }
-        assetProviderPayout = assetProviderPayout_;
-        redeemSink = redeemSink_;
-        vaultBookkeeping = vaultBookkeeping_;
-        routingConfigured = true;
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -181,35 +135,36 @@ contract TradeManager is
         _unpause();
     }
 
-    /// @param weightUg Gold amount in **micrograms** (must meet `minimumBuyGoldValueInUg` when set, and `maxAmountPerTx` cap).
-    /// @param fiat_value INR minor units for this leg (e.g. paise); non-KYC cumulative cap uses this field.
-    /// @param payment_ref Off-chain payment correlation id.
-    /// @param txDetailsHash Audit hash for rails / settlement metadata.
     function createBuyRequestFor(
         address user,
+        bytes32 assetId,
+        bytes32 providerId,
         uint256 weightUg,
         uint256 fiat_value,
         bytes32 payment_ref,
         bytes32 txDetailsHash
     ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         _requireUserRole(user);
-        return _createBuyRequest(user, weightUg, fiat_value, payment_ref, txDetailsHash);
+        return _createBuyRequest(user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
     }
 
     function _createBuyRequest(
         address user,
+        bytes32 assetId,
+        bytes32 providerId,
         uint256 weightUg,
         uint256 fiat_value,
         bytes32 payment_ref,
         bytes32 txDetailsHash
     ) private returns (uint256 requestId) {
-        if (!routingConfigured) revert RoutingNotSet();
-        _checkBuyGoldAmount(weightUg);
+        _validateAssetProvider(assetId, providerId);
+        _checkBuyAmount(assetId, weightUg);
         if (fiat_value == 0) revert ZeroFiatValue();
-        if (goldNFT.totalAssetProviderBalance() < weightUg) revert InsufficientApInventory();
+        _requireBuyProviderBinding(user, assetId, providerId);
+        if (assetLedger.providerPoolBalance(assetId, providerId) < weightUg) revert InsufficientApInventory();
 
         if (whitelistRegistry.isEligible(user)) {
-            _checkBuyCap(weightUg);
+            _checkBuyCap(assetId, weightUg);
         } else if (whitelistRegistry.isEligibleForNonKycUser(user)) {
             _checkNonKycFiatCap(user, fiat_value);
         } else {
@@ -217,183 +172,197 @@ contract TradeManager is
         }
 
         requestId = ++nextRequestId;
-        _finalizeBuy(requestId, user, weightUg, fiat_value, payment_ref, txDetailsHash);
+        _finalizeBuy(requestId, user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
     }
 
-    function createSellRequestFor(address user, uint256 amountUg, bytes32 payoutRefId)
-        external
-        onlyTrustedForwarder
-        whenNotPaused
-        nonReentrant
-        returns (uint256 requestId)
-    {
+    function createSellRequestFor(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 payoutRefId
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         _requireUserRole(user);
-        return _createSellRequest(user, amountUg, payoutRefId);
+        return _createSellRequest(user, assetId, providerId, amountUg, payoutRefId);
     }
 
-    function _createSellRequest(address user, uint256 amountUg, bytes32 payoutRefId)
-        private
-        returns (uint256 requestId)
-    {
-        if (!routingConfigured) revert RoutingNotSet();
+    function _createSellRequest(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 payoutRefId
+    ) private returns (uint256 requestId) {
+        _validateAssetProvider(assetId, providerId);
         _requireEligible(user);
-        _requireNotTimelocked(user);
+        _requireNotTimelocked(user, assetId);
+        _requireUserProviderBinding(user, assetId, providerId);
         _checkAmountUg(amountUg);
-        _checkSellCap(amountUg);
+        _checkSellCap(assetId, amountUg);
 
         requestId = ++nextRequestId;
-        escrowVault.lockTokens(user, amountUg, StoexTypes.EscrowReason.Sell, requestId);
+        escrowVault.lockTokens(user, assetId, providerId, amountUg, StoexTypes.EscrowReason.Sell, requestId);
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Sell,
-            status: StoexTypes.RequestStatus.Proposed,
-            initiator: user,
-            targetUser: user,
-            amountUg: amountUg,
-            paymentRefId: payoutRefId,
-            vaultReceiptId: bytes32(0),
-            reason: "",
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: _emptyLot(),
-            escrowLocked: true,
-            fiatValue: 0,
-            txDetailsHash: bytes32(0)
-        });
+        TradeManagerLib.initPendingRequest(
+            _requests[requestId],
+            assetId,
+            providerId,
+            StoexTypes.RequestType.Sell,
+            user,
+            user,
+            amountUg,
+            payoutRefId,
+            bytes32(0),
+            "",
+            exp,
+            TradeManagerLib.emptyLot(),
+            true
+        );
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Sell, user, amountUg, 0);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Sell, user, amountUg, 0);
     }
 
-    function createRedeemRequestFor(address user, uint256 amountUg, bytes32 deliveryRefId)
-        external
-        onlyTrustedForwarder
-        whenNotPaused
-        nonReentrant
-        returns (uint256 requestId)
-    {
+    function createRedeemRequestFor(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 deliveryRefId
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         _requireUserRole(user);
-        return _createRedeemRequest(user, amountUg, deliveryRefId);
+        return _createRedeemRequest(user, assetId, providerId, amountUg, deliveryRefId);
     }
 
-    function _createRedeemRequest(address user, uint256 amountUg, bytes32 deliveryRefId)
-        private
-        returns (uint256 requestId)
-    {
-        if (!routingConfigured) revert RoutingNotSet();
+    function _createRedeemRequest(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 deliveryRefId
+    ) private returns (uint256 requestId) {
+        _validateAssetProvider(assetId, providerId);
         _requireEligible(user);
-        _requireNotTimelocked(user);
+        _requireNotTimelocked(user, assetId);
+        _requireUserProviderBinding(user, assetId, providerId);
         if (amountUg < governance.minRedeemAmountUg()) revert BelowMinRedeem();
         _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
-        escrowVault.lockTokens(user, amountUg, StoexTypes.EscrowReason.Redeem, requestId);
+        escrowVault.lockTokens(user, assetId, providerId, amountUg, StoexTypes.EscrowReason.Redeem, requestId);
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Redeem,
-            status: StoexTypes.RequestStatus.Proposed,
-            initiator: user,
-            targetUser: user,
-            amountUg: amountUg,
-            paymentRefId: deliveryRefId,
-            vaultReceiptId: bytes32(0),
-            reason: "",
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: _emptyLot(),
-            escrowLocked: true,
-            fiatValue: 0,
-            txDetailsHash: bytes32(0)
-        });
+        TradeManagerLib.initPendingRequest(
+            _requests[requestId],
+            assetId,
+            providerId,
+            StoexTypes.RequestType.Redeem,
+            user,
+            user,
+            amountUg,
+            deliveryRefId,
+            bytes32(0),
+            "",
+            exp,
+            TradeManagerLib.emptyLot(),
+            true
+        );
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
-    function proposeMintFor(address ap, uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
-        external
-        onlyTrustedForwarder
-        whenNotPaused
-        nonReentrant
-        returns (uint256 requestId)
-    {
+    function proposeMintFor(
+        address ap,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 vaultReceiptId,
+        StoexTypes.MintLotMeta calldata lot
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
-        return _proposeMint(ap, amountUg, vaultReceiptId, lot);
+        if (!assetProviderRegistry.isOperator(providerId, ap)) revert NotProviderOperator();
+        return _proposeMint(ap, assetId, providerId, amountUg, vaultReceiptId, lot);
     }
 
-    function _proposeMint(address ap, uint256 amountUg, bytes32 vaultReceiptId, StoexTypes.MintLotMeta calldata lot)
-        private
-        returns (uint256 requestId)
-    {
-        if (!routingConfigured) revert RoutingNotSet();
+    function _proposeMint(
+        address ap,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 vaultReceiptId,
+        StoexTypes.MintLotMeta calldata lot
+    ) private returns (uint256 requestId) {
+        _validateAssetProvider(assetId, providerId);
         _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
         StoexTypes.MintLotMeta memory m = lot;
+        m.assetId = assetId;
+        m.providerId = providerId;
         m.amountUg = amountUg;
         m.vaultReceiptId = vaultReceiptId;
 
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Mint,
-            status: StoexTypes.RequestStatus.Proposed,
-            initiator: ap,
-            targetUser: address(0),
-            amountUg: amountUg,
-            paymentRefId: bytes32(0),
-            vaultReceiptId: vaultReceiptId,
-            reason: "",
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: m,
-            escrowLocked: false,
-            fiatValue: 0,
-            txDetailsHash: bytes32(0)
-        });
+        TradeManagerLib.initPendingRequest(
+            _requests[requestId],
+            assetId,
+            providerId,
+            StoexTypes.RequestType.Mint,
+            ap,
+            address(0),
+            amountUg,
+            bytes32(0),
+            vaultReceiptId,
+            "",
+            exp,
+            m,
+            false
+        );
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Mint, ap, amountUg, 0);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Mint, ap, amountUg, 0);
     }
 
-    function proposeBurnFor(address ap, uint256 amountUg, bytes32 referenceId, string calldata reason_)
-        external
-        onlyTrustedForwarder
-        whenNotPaused
-        nonReentrant
-        returns (uint256 requestId)
-    {
+    function proposeBurnFor(
+        address ap,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 referenceId,
+        string calldata reason_
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
-        return _proposeBurn(ap, amountUg, referenceId, reason_);
+        if (!assetProviderRegistry.isOperator(providerId, ap)) revert NotProviderOperator();
+        return _proposeBurn(ap, assetId, providerId, amountUg, referenceId, reason_);
     }
 
-    function _proposeBurn(address ap, uint256 amountUg, bytes32 referenceId, string calldata reason_)
-        private
-        returns (uint256 requestId)
-    {
-        if (!routingConfigured) revert RoutingNotSet();
+    function _proposeBurn(
+        address ap,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 referenceId,
+        string calldata reason_
+    ) private returns (uint256 requestId) {
+        _validateAssetProvider(assetId, providerId);
         _checkAmountUg(amountUg);
 
         requestId = ++nextRequestId;
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Burn,
-            status: StoexTypes.RequestStatus.Proposed,
-            initiator: ap,
-            targetUser: address(0),
-            amountUg: amountUg,
-            paymentRefId: referenceId,
-            vaultReceiptId: bytes32(0),
-            reason: reason_,
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: _emptyLot(),
-            escrowLocked: false,
-            fiatValue: 0,
-            txDetailsHash: bytes32(0)
-        });
+        TradeManagerLib.initPendingRequest(
+            _requests[requestId],
+            assetId,
+            providerId,
+            StoexTypes.RequestType.Burn,
+            ap,
+            address(0),
+            amountUg,
+            referenceId,
+            bytes32(0),
+            reason_,
+            exp,
+            TradeManagerLib.emptyLot(),
+            false
+        );
 
-        emit RequestCreated(requestId, StoexTypes.RequestType.Burn, ap, amountUg, 0);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Burn, ap, amountUg, 0);
     }
 
     function approveRequestFor(address approver, uint256 requestId) external onlyTrustedForwarder whenNotPaused nonReentrant {
@@ -401,7 +370,7 @@ contract TradeManager is
     }
 
     function _approveRequest(address approver, uint256 requestId) private {
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         _requirePending(r);
         if (block.timestamp > r.expiresAt) revert Expired();
 
@@ -410,6 +379,10 @@ contract TradeManager is
 
         bytes32 requiredRole = pol[r.approvalsDone];
         if (!hasRole(requiredRole, approver)) revert NotApprover();
+        if (requiredRole == StoexRoles.AP_ROLE && !assetProviderRegistry.isOperator(r.providerId, approver)) {
+            revert NotProviderOperator();
+        }
+
         uint256 step = r.approvalsDone;
         if (_stepApproved[requestId][step]) revert StepDone();
 
@@ -436,7 +409,7 @@ contract TradeManager is
     }
 
     function _rejectRequest(address rejector, uint256 requestId, string calldata reason_) private {
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         _requirePending(r);
         if (
             !hasRole(StoexRoles.AP_ROLE, rejector) && !hasRole(StoexRoles.VP_ROLE, rejector)
@@ -463,7 +436,7 @@ contract TradeManager is
     }
 
     function _cancelRequest(address initiator, uint256 requestId) private {
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         if (r.initiator != initiator) revert NotInitiator();
         _requirePending(r);
         if (r.escrowLocked) {
@@ -475,7 +448,7 @@ contract TradeManager is
     }
 
     function expireRequest(uint256 requestId) external nonReentrant {
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         if (block.timestamp <= r.expiresAt) revert NotExpired();
         if (
             r.status == StoexTypes.RequestStatus.Executed || r.status == StoexTypes.RequestStatus.Rejected
@@ -491,22 +464,31 @@ contract TradeManager is
     }
 
     function executeRequest(uint256 requestId) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
         if (r.status != StoexTypes.RequestStatus.ATApproved) revert NotFullyApproved();
-        _executeTrade(requestId, r);
+        TradeManagerLib.executeTrade(
+            r,
+            requestId,
+            _dayCaps,
+            whitelistRegistry,
+            governance,
+            assetLedger,
+            assetProviderRegistry,
+            escrowVault,
+            timelockController
+        );
         r.status = StoexTypes.RequestStatus.Executed;
         emit RequestExecuted(requestId, r.requestType);
     }
 
-    /// @notice EIP-712 co-sign path: signatures must follow governance approval policy order for this request.
     function executeWithCoSignatures(uint256 requestId, uint256 nonce, uint256 deadline, bytes[] calldata signatures)
         external
         whenNotPaused
         nonReentrant
     {
         if (block.timestamp > deadline) revert SignatureDeadline();
-        TradeRequest storage r = _requests[requestId];
+        StoexTypes.TradeRequest storage r = _requests[requestId];
         if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
         if (block.timestamp > r.expiresAt) revert Expired();
         if (r.approvalsDone != 0) revert AlreadyProgressed();
@@ -519,13 +501,7 @@ contract TradeManager is
 
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(CO_SIGN_TYPEHASH, requestId, nonce, deadline)));
 
-        address last = address(0);
-        for (uint256 i = 0; i < pol.length; i++) {
-            address signer = ECDSA.recover(digest, signatures[i]);
-            if (signer == last) revert DuplicateSigner();
-            if (!hasRole(pol[i], signer)) revert BadSigner();
-            last = signer;
-        }
+        TradeManagerLib.verifyCoSigners(digest, signatures, pol, r.providerId, this, assetProviderRegistry);
 
         coSignNonce[requestId] = nonce + 1;
         emit CoSignConsumed(requestId, nonce);
@@ -536,12 +512,22 @@ contract TradeManager is
         r.approvalsDone = pol.length;
         r.status = StoexTypes.RequestStatus.ATApproved;
 
-        _executeTrade(requestId, r);
+        TradeManagerLib.executeTrade(
+            r,
+            requestId,
+            _dayCaps,
+            whitelistRegistry,
+            governance,
+            assetLedger,
+            assetProviderRegistry,
+            escrowVault,
+            timelockController
+        );
         r.status = StoexTypes.RequestStatus.Executed;
         emit RequestExecuted(requestId, r.requestType);
     }
 
-    function getRequest(uint256 requestId) external view returns (TradeRequest memory) {
+    function getRequest(uint256 requestId) external view returns (StoexTypes.TradeRequest memory) {
         return _requests[requestId];
     }
 
@@ -549,76 +535,50 @@ contract TradeManager is
         return _requests[requestId].status;
     }
 
-    /// @dev Assumes `createBuyRequest` already validated pool, caps, and eligibility (same tx, nonReentrant).
+    function _validateAssetProvider(bytes32 assetId, bytes32 providerId) private view {
+        if (!assetRegistry.isActive(assetId)) revert InactiveAsset();
+        if (!assetProviderRegistry.isProviderActive(providerId)) revert InactiveProvider();
+        if (!assetProviderRegistry.providerSupportsAsset(providerId, assetId)) revert AssetNotSupported();
+    }
+
+    function _requireUserProviderBinding(address user, bytes32 assetId, bytes32 providerId) private view {
+        if (assetLedger.userActiveProvider(user, assetId) != providerId) revert ProviderBindingConflict();
+    }
+
+    function _requireBuyProviderBinding(address user, bytes32 assetId, bytes32 providerId) private view {
+        bytes32 active = assetLedger.userActiveProvider(user, assetId);
+        if (active != bytes32(0) && active != providerId) revert ProviderBindingConflict();
+    }
+
     function _finalizeBuy(
         uint256 requestId,
         address user,
+        bytes32 assetId,
+        bytes32 providerId,
         uint256 weightUg,
         uint256 fiat_value,
         bytes32 payment_ref,
         bytes32 txDetailsHash_
     ) private {
-        if (goldNFT.tokenIdByBeneficiary(user) == 0) {
-            goldNFT.mintCertificateForTrade(user);
-        }
-        goldNFT.transferFromAPToUser(user, weightUg, _emptyLot(), requestId, StoexTypes.TxType.Buy);
+        TradeManagerLib.finalizeBuy(
+            _requests[requestId],
+            requestId,
+            user,
+            assetId,
+            providerId,
+            weightUg,
+            fiat_value,
+            payment_ref,
+            txDetailsHash_,
+            _dayCaps,
+            _nonKycFiatPurchased,
+            whitelistRegistry,
+            governance,
+            assetLedger
+        );
 
-        if (whitelistRegistry.isEligible(user)) {
-            _accrueBuy(weightUg);
-        } else {
-            _nonKycFiatPurchased[user] += fiat_value;
-        }
-
-        uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        _requests[requestId] = TradeRequest({
-            requestType: StoexTypes.RequestType.Buy,
-            status: StoexTypes.RequestStatus.Executed,
-            initiator: user,
-            targetUser: user,
-            amountUg: weightUg,
-            paymentRefId: payment_ref,
-            vaultReceiptId: bytes32(0),
-            reason: "",
-            createdAt: block.timestamp,
-            expiresAt: exp,
-            approvalsDone: 0,
-            mintLot: _emptyLot(),
-            escrowLocked: false,
-            fiatValue: fiat_value,
-            txDetailsHash: txDetailsHash_
-        });
-
-        emit RequestCreated(requestId, StoexTypes.RequestType.Buy, user, weightUg, fiat_value);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Buy, user, weightUg, fiat_value);
         emit RequestExecuted(requestId, StoexTypes.RequestType.Buy);
-    }
-
-    function _executeTrade(uint256 requestId, TradeRequest storage r) private {
-        if (r.requestType == StoexTypes.RequestType.Sell) {
-            _requireEligible(r.targetUser);
-            _checkSellCap(r.amountUg);
-            _accrueSell(r.amountUg);
-            escrowVault.releaseEscrow(requestId, assetProviderPayout);
-            r.escrowLocked = false;
-            goldNFT.decreaseSupply(r.targetUser, r.amountUg, StoexTypes.TxType.Sell, requestId);
-        } else if (r.requestType == StoexTypes.RequestType.Redeem) {
-            _requireEligible(r.targetUser);
-            escrowVault.releaseEscrow(requestId, redeemSink);
-            r.escrowLocked = false;
-            goldNFT.decreaseSupply(r.targetUser, r.amountUg, StoexTypes.TxType.Redeem, requestId);
-        } else if (r.requestType == StoexTypes.RequestType.Mint) {
-            uint256 lotId = goldNFT.mintToPool(r.amountUg, r.mintLot, requestId);
-            uint256 dur = governance.defaultTimelockDuration();
-            if (dur > 0) {
-                timelockController.applyMintLotTimelock(lotId, block.timestamp + dur);
-            }
-        } else if (r.requestType == StoexTypes.RequestType.Burn) {
-            goldNFT.burnFromPool(r.amountUg, requestId);
-        }
-    }
-
-    /// @dev PRD burn reduces unsold AP pool inventory and total system supply.
-    function _emptyLot() private pure returns (StoexTypes.MintLotMeta memory m) {
-        return m;
     }
 
     function _requireEligible(address u) private view {
@@ -629,13 +589,8 @@ contract TradeManager is
         if (!hasRole(StoexRoles.USER_ROLE, user)) revert NotUser();
     }
 
-    function _requireNotTimelocked(address user) private view {
-        if (timelockController.isTimelocked(user)) revert Timelocked();
-        uint256[] memory lots = goldNFT.getUserLotIds(user);
-        for (uint256 i = 0; i < lots.length; i++) {
-            uint256 exp = timelockController.getLotTimelockExpiry(lots[i]);
-            if (exp != 0 && block.timestamp < exp) revert Timelocked();
-        }
+    function _requireNotTimelocked(address user, bytes32 assetId) private view {
+        TradeManagerLib.requireNotTimelocked(user, assetId, timelockController, assetLedger);
     }
 
     function _checkAmountUg(uint256 amountUg) private view {
@@ -643,49 +598,30 @@ contract TradeManager is
         if (amountUg > governance.maxAmountPerTx()) revert ExceedsMax();
     }
 
-    /// @dev Buy-specific: microgram bounds including admin `minimumBuyGoldValueInUg` (skipped when that value is 0).
-    function _checkBuyGoldAmount(uint256 weightUg) private view {
+    function _checkBuyAmount(bytes32 assetId, uint256 weightUg) private view {
         if (weightUg == 0) revert ZeroAmount();
         if (weightUg > governance.maxAmountPerTx()) revert ExceedsMax();
-        uint256 minUg = governance.minimumBuyGoldValueInUg();
-        if (minUg > 0 && weightUg < minUg) revert BelowMinBuyGold();
+        uint256 minUg = governance.minimumBuyValueInUg(assetId);
+        if (minUg > 0 && weightUg < minUg) revert BelowMinBuy();
     }
 
-    function _checkBuyCap(uint256 amountUg) private view {
+    function _checkBuyCap(bytes32 assetId, uint256 amountUg) private view {
         uint256 day = block.timestamp / 1 days;
-        uint256 used = _buyDay == day ? _buyDayAmountUg : 0;
-        if (used + amountUg > governance.dailyBuyCap()) revert CapBuy();
+        uint256 used = _dayCaps.buyDay[assetId] == day ? _dayCaps.buyDayAmountUg[assetId] : 0;
+        if (used + amountUg > governance.dailyBuyCap(assetId)) revert CapBuy();
     }
 
     function _checkNonKycFiatCap(address user, uint256 fiatValue_) private view {
         if (_nonKycFiatPurchased[user] + fiatValue_ > governance.nonKycMaxBuyFiatAmount()) revert CapBuyNonKyc();
     }
 
-    function _checkSellCap(uint256 amountUg) private view {
+    function _checkSellCap(bytes32 assetId, uint256 amountUg) private view {
         uint256 day = block.timestamp / 1 days;
-        uint256 used = _sellDay == day ? _sellDayAmountUg : 0;
-        if (used + amountUg > governance.dailySellCap()) revert CapSell();
+        uint256 used = _dayCaps.sellDay[assetId] == day ? _dayCaps.sellDayAmountUg[assetId] : 0;
+        if (used + amountUg > governance.dailySellCap(assetId)) revert CapSell();
     }
 
-    function _accrueBuy(uint256 amountUg) private {
-        uint256 day = block.timestamp / 1 days;
-        if (_buyDay != day) {
-            _buyDay = day;
-            _buyDayAmountUg = 0;
-        }
-        _buyDayAmountUg += amountUg;
-    }
-
-    function _accrueSell(uint256 amountUg) private {
-        uint256 day = block.timestamp / 1 days;
-        if (_sellDay != day) {
-            _sellDay = day;
-            _sellDayAmountUg = 0;
-        }
-        _sellDayAmountUg += amountUg;
-    }
-
-    function _requirePending(TradeRequest storage r) private view {
+    function _requirePending(StoexTypes.TradeRequest storage r) private view {
         if (
             r.status == StoexTypes.RequestStatus.Executed || r.status == StoexTypes.RequestStatus.Rejected
                 || r.status == StoexTypes.RequestStatus.Cancelled || r.status == StoexTypes.RequestStatus.Expired
@@ -702,7 +638,7 @@ contract TradeManager is
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    uint256[37] private __gap;
+    uint256[34] private __gap;
 
     error ZeroAddress();
     error NotWhitelistRegistry();
@@ -716,6 +652,7 @@ contract TradeManager is
     error BelowMinRedeem();
     error Timelocked();
     error NotApprover();
+    error NotProviderOperator();
     error StepDone();
     error FullyApproved();
     error Expired();
@@ -730,10 +667,12 @@ contract TradeManager is
     error DuplicateSigner();
     error InvalidRole();
     error SignatureDeadline();
-    error RoutingNotSet();
-    error AlreadySet();
     error ZeroFiatValue();
     error InsufficientApInventory();
-    error BelowMinBuyGold();
+    error BelowMinBuy();
     error BuyUsesAutoExecution();
+    error InactiveAsset();
+    error InactiveProvider();
+    error AssetNotSupported();
+    error ProviderBindingConflict();
 }

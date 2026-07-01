@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — StoexRoles
 /// @notice Canonical `bytes32` role constants (`keccak256("ROLE_NAME")`) shared across all upgradeable contracts (PRD RBAC).
-/// @dev `TRADE_MANAGER_ROLE` is granted to the `TradeManager` proxy so it can call `GoldNFT` supply mutators and is **not** the same as the optional ERC-2771 forwarder (not included here).
+/// @dev `TRADE_MANAGER_ROLE` is granted to the `TradeManager` proxy so it can call `AssetLedger` supply mutators.
 library StoexRoles {
     bytes32 internal constant AP_ROLE = keccak256("AP_ROLE");
     bytes32 internal constant VP_ROLE = keccak256("VP_ROLE");

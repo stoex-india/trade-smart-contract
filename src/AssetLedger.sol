@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title STOEX Gold — GoldNFT
-/// @notice **Soulbound** ERC-721 certificate: at most one token per **beneficiary** (economic owner). ERC-721 `ownerOf` is **custody** (may differ after nominee transfer).
-/// @dev UUPS upgradeable. Supply accounting:
-/// - `totalGoldSupply`: canonical **micrograms (µg)** on-chain; increases on PRD mint (`mintToPool`), decreases on redeem/burn (`decreaseSupply` / `burnFromPool`).
-/// - `totalAssetProviderBalance`: unsold AP retail pool; increases on mint (`mintToPool`) and sell returns; decreases on buy (`transferFromAPToUser`) and burn (`burnFromPool`).
-/// - `circulatingSupply()` = `totalGoldSupply - totalAssetProviderBalance` (µg with users vs pool).
-/// - `userHolding` tracks micrograms per beneficiary.
-/// - `mintToPool` / `burnFromPool` / `transferFromAPToUser` / `decreaseSupply` are restricted to `TRADE_MANAGER_ROLE`.
-/// - `mintCertificate` is `AP_ROLE`; `mintCertificateForTrade` is `TRADE_MANAGER_ROLE` for automated first purchase/mint execution.
-/// - Transfers are blocked in `_update` except mint/burn/admin nominee flow (`_nomineeTransferActive`).
+/// @title AssetLedger
+/// @notice Soulbound ERC-721 certificates (one per user per asset) and multi-provider inventory accounting.
+/// @dev Amounts are integer micrograms (µg). `providerPoolBalance` is unsold AP retail inventory per (asset, provider).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
@@ -24,9 +17,9 @@ import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Cont
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
-import {IGoldNFT} from "./interfaces/IGoldNFT.sol";
+import {IAssetLedger} from "./interfaces/IAssetLedger.sol";
 
-contract GoldNFT is
+contract AssetLedger is
     Initializable,
     ERC721URIStorageUpgradeable,
     StoexDeployerAdminUpgradeable,
@@ -34,37 +27,40 @@ contract GoldNFT is
     ReentrancyGuardUpgradeable,
     ERC2771ContextUpgradeable,
     UUPSUpgradeable,
-    IGoldNFT
+    IAssetLedger
 {
     uint8 public version;
     IWhitelistRegistry public whitelistRegistry;
 
-    uint256 public totalGoldSupply;
     uint256 public nextTokenId;
     uint256 private _nextLotId;
 
-    mapping(address => uint256) public userHolding;
-    mapping(address => uint256) public tokenIdByBeneficiary;
-    mapping(uint256 => address) public beneficiaryOfToken;
+    mapping(bytes32 assetId => uint256) private _totalSupply;
+    mapping(bytes32 assetId => uint256) private _totalPoolBalance;
+    mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _providerPoolBalance;
+    mapping(address user => mapping(bytes32 assetId => mapping(bytes32 providerId => uint256))) private _userHolding;
+    mapping(address user => mapping(bytes32 assetId => bytes32)) private _userActiveProvider;
+    mapping(address user => mapping(bytes32 assetId => uint256)) private _tokenIdByBeneficiary;
+    mapping(uint256 tokenId => address) public beneficiaryOfToken;
+    mapping(uint256 tokenId => bytes32) private _tokenAssetId;
     mapping(uint256 => StoexTypes.MintLotMeta) private _mintLots;
-    mapping(address => uint256[]) private _userLotIds;
-    uint256[] private _poolLotIds;
-
+    mapping(address => mapping(bytes32 => uint256[])) private _userLotIds;
+    mapping(bytes32 => mapping(bytes32 => uint256[])) private _poolLotIds;
     mapping(address => StoexTypes.TxRecord[]) private _txHistory;
 
     bool private _nomineeTransferActive;
     address private _trustedForwarderValue;
-
     string private _baseTokenUri;
 
-    event CertificateMinted(address indexed user, uint256 tokenId);
-    event SupplyIncreased(uint256 amountUg, address indexed user, uint256 lotId);
-    event SupplyDecreased(uint256 amountUg, address indexed user, StoexTypes.TxType txType);
-    event PoolInventoryMinted(uint256 amountUg, uint256 lotId, uint256 requestId);
-    event PoolInventoryBurned(uint256 amountUg, uint256 requestId);
+    event CertificateMinted(bytes32 indexed assetId, address indexed user, uint256 tokenId);
+    event SupplyIncreased(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, address indexed user, uint256 lotId);
+    event SupplyDecreased(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, address indexed user, StoexTypes.TxType txType);
+    event PoolInventoryMinted(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, uint256 lotId, uint256 requestId);
+    event PoolInventoryBurned(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, uint256 requestId);
     event MetadataUpdated(uint256 tokenId, string uri);
     event NomineeTransferred(address indexed fromBeneficiary, address indexed toCustody, uint256 tokenId);
     event WhitelistRegistryUpdated(address registry);
+    event ActiveProviderCleared(address indexed user, bytes32 indexed assetId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() ERC2771ContextUpgradeable(address(0)) {
@@ -74,7 +70,7 @@ contract GoldNFT is
     function initialize(address deployer_, address whitelistRegistry_, address trustedForwarder_) external initializer {
         if (deployer_ == address(0) || whitelistRegistry_ == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
 
-        __ERC721_init("STOEX Gold Certificate", "STOEX-AU");
+        __ERC721_init("STOEX Asset Certificate", "STOEX-ASSET");
         __ERC721URIStorage_init();
         __AccessControl_init();
         __Pausable_init();
@@ -84,10 +80,9 @@ contract GoldNFT is
 
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
         _trustedForwarderValue = trustedForwarder_;
-        version = 1;
+        version = 2;
     }
 
-    /// @notice Updates trusted ERC-2771 forwarder for gasless `GoldNFT` calls.
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (trustedForwarder_ == address(0)) revert ZeroAddress();
         _trustedForwarderValue = trustedForwarder_;
@@ -111,28 +106,70 @@ contract GoldNFT is
         return _baseTokenUri;
     }
 
-    function mintCertificate(address user) external onlyRole(StoexRoles.AP_ROLE) whenNotPaused nonReentrant {
-        _mintCertificate(user);
+    function userHolding(address user, bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _userHolding[user][assetId][providerId];
     }
 
-    function mintCertificateForTrade(address user) external onlyRole(StoexRoles.TRADE_MANAGER_ROLE) whenNotPaused nonReentrant {
-        _mintCertificate(user);
+    function userActiveProvider(address user, bytes32 assetId) external view override returns (bytes32) {
+        return _userActiveProvider[user][assetId];
     }
 
-    function _mintCertificate(address user) internal {
+    function providerPoolBalance(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _providerPoolBalance[assetId][providerId];
+    }
+
+    function totalSupply(bytes32 assetId) external view override returns (uint256) {
+        return _totalSupply[assetId];
+    }
+
+    function circulatingSupply(bytes32 assetId) external view override returns (uint256) {
+        uint256 supply = _totalSupply[assetId];
+        uint256 pool = _totalPoolBalance[assetId];
+        return supply > pool ? supply - pool : 0;
+    }
+
+    function tokenIdByBeneficiary(address beneficiary, bytes32 assetId) external view override returns (uint256) {
+        return _tokenIdByBeneficiary[beneficiary][assetId];
+    }
+
+    function tokenAssetId(uint256 tokenId) external view override returns (bytes32) {
+        return _tokenAssetId[tokenId];
+    }
+
+    function mintCertificate(bytes32 assetId, address user) external onlyRole(StoexRoles.AP_ROLE) whenNotPaused nonReentrant {
+        _mintCertificate(assetId, user);
+    }
+
+    function mintCertificateForTrade(bytes32 assetId, address user)
+        external
+        onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
+        _mintCertificate(assetId, user);
+    }
+
+    function _mintCertificate(bytes32 assetId, address user) internal {
+        if (assetId == bytes32(0)) revert ZeroAssetId();
         if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
-        if (tokenIdByBeneficiary[user] != 0) revert AlreadyHasCertificate();
+        if (_tokenIdByBeneficiary[user][assetId] != 0) revert AlreadyHasCertificate();
 
         uint256 tokenId = ++nextTokenId;
-        tokenIdByBeneficiary[user] = tokenId;
+        _tokenIdByBeneficiary[user][assetId] = tokenId;
         beneficiaryOfToken[tokenId] = user;
+        _tokenAssetId[tokenId] = assetId;
         _safeMint(user, tokenId);
 
-        emit CertificateMinted(user, tokenId);
+        emit CertificateMinted(assetId, user, tokenId);
     }
 
-    /// @notice PRD mint path: tokenize vaulted gold into the AP buy pool (no user credit).
-    function mintToPool(uint256 amountUg, StoexTypes.MintLotMeta calldata lot, uint256 requestId)
+    function mintToPool(
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        StoexTypes.MintLotMeta calldata lot,
+        uint256 requestId
+    )
         external
         override
         onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
@@ -140,64 +177,88 @@ contract GoldNFT is
         nonReentrant
         returns (uint256 lotId)
     {
+        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
         if (amountUg == 0) revert ZeroAmount();
+        if (lot.assetId != bytes32(0) && lot.assetId != assetId) revert AssetMismatch();
+        if (lot.providerId != bytes32(0) && lot.providerId != providerId) revert ProviderMismatch();
 
         lotId = ++_nextLotId;
         StoexTypes.MintLotMeta memory m = lot;
+        m.assetId = assetId;
+        m.providerId = providerId;
         m.amountUg = amountUg;
         _mintLots[lotId] = m;
-        _poolLotIds.push(lotId);
+        _poolLotIds[assetId][providerId].push(lotId);
 
-        totalGoldSupply += amountUg;
-        totalAssetProviderBalance += amountUg;
+        _totalSupply[assetId] += amountUg;
+        _providerPoolBalance[assetId][providerId] += amountUg;
+        _totalPoolBalance[assetId] += amountUg;
 
-        emit PoolInventoryMinted(amountUg, lotId, requestId);
+        emit PoolInventoryMinted(assetId, providerId, amountUg, lotId, requestId);
     }
 
-    /// @notice PRD burn path: remove unsold inventory from the AP buy pool.
-    function burnFromPool(uint256 amountUg, uint256 requestId)
+    function burnFromPool(bytes32 assetId, bytes32 providerId, uint256 amountUg, uint256 requestId)
         external
         override
         onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
         whenNotPaused
         nonReentrant
     {
+        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
         if (amountUg == 0) revert ZeroAmount();
-        if (totalAssetProviderBalance < amountUg) revert InsufficientPoolInventory();
+        if (_providerPoolBalance[assetId][providerId] < amountUg) revert InsufficientPoolInventory();
 
-        totalGoldSupply -= amountUg;
-        totalAssetProviderBalance -= amountUg;
+        _totalSupply[assetId] -= amountUg;
+        _providerPoolBalance[assetId][providerId] -= amountUg;
+        _totalPoolBalance[assetId] -= amountUg;
 
-        emit PoolInventoryBurned(amountUg, requestId);
+        emit PoolInventoryBurned(assetId, providerId, amountUg, requestId);
     }
 
-    function decreaseSupply(address user, uint256 amountUg, StoexTypes.TxType txType, uint256 requestId)
-        external
-        override
-        onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
-        whenNotPaused
-        nonReentrant
-    {
+    function decreaseSupply(
+        bytes32 assetId,
+        bytes32 providerId,
+        address user,
+        uint256 amountUg,
+        StoexTypes.TxType txType,
+        uint256 requestId
+    ) external override onlyRole(StoexRoles.TRADE_MANAGER_ROLE) whenNotPaused nonReentrant {
         if (!whitelistRegistry.isEligible(user)) revert NotEligible();
+        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
         if (amountUg == 0) revert ZeroAmount();
-        if (userHolding[user] < amountUg) revert InsufficientBalance();
+        _requireActiveProvider(user, assetId, providerId);
+        if (_userHolding[user][assetId][providerId] < amountUg) revert InsufficientBalance();
 
-        userHolding[user] -= amountUg;
+        _userHolding[user][assetId][providerId] -= amountUg;
         if (txType == StoexTypes.TxType.Sell) {
-            totalAssetProviderBalance += amountUg;
+            _providerPoolBalance[assetId][providerId] += amountUg;
+            _totalPoolBalance[assetId] += amountUg;
         } else {
-            totalGoldSupply -= amountUg;
+            _totalSupply[assetId] -= amountUg;
+        }
+
+        if (_userHolding[user][assetId][providerId] == 0) {
+            delete _userActiveProvider[user][assetId];
+            emit ActiveProviderCleared(user, assetId);
         }
 
         _txHistory[user].push(
-            StoexTypes.TxRecord({txType: txType, amountUg: amountUg, timestamp: block.timestamp, requestId: requestId})
+            StoexTypes.TxRecord({
+                assetId: assetId,
+                providerId: providerId,
+                txType: txType,
+                amountUg: amountUg,
+                timestamp: block.timestamp,
+                requestId: requestId
+            })
         );
 
-        emit SupplyDecreased(amountUg, user, txType);
+        emit SupplyDecreased(assetId, providerId, amountUg, user, txType);
     }
 
-    /// @inheritdoc IGoldNFT
     function transferFromAPToUser(
+        bytes32 assetId,
+        bytes32 providerId,
         address user,
         uint256 amountUg,
         StoexTypes.MintLotMeta calldata lot,
@@ -212,22 +273,34 @@ contract GoldNFT is
         returns (uint256 lotId)
     {
         if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
-        if (tokenIdByBeneficiary[user] == 0) revert NoCertificate();
+        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
+        if (_tokenIdByBeneficiary[user][assetId] == 0) revert NoCertificate();
         if (amountUg == 0) revert ZeroAmount();
-        if (totalAssetProviderBalance < amountUg) revert InsufficientPoolInventory();
+        if (_providerPoolBalance[assetId][providerId] < amountUg) revert InsufficientPoolInventory();
 
-        totalAssetProviderBalance -= amountUg;
+        bytes32 active = _userActiveProvider[user][assetId];
+        if (active != bytes32(0) && active != providerId) revert ProviderBindingConflict();
+
+        _providerPoolBalance[assetId][providerId] -= amountUg;
+        _totalPoolBalance[assetId] -= amountUg;
+        if (active == bytes32(0)) {
+            _userActiveProvider[user][assetId] = providerId;
+        }
 
         lotId = ++_nextLotId;
         StoexTypes.MintLotMeta memory m = lot;
+        m.assetId = assetId;
+        m.providerId = providerId;
         m.amountUg = amountUg;
         _mintLots[lotId] = m;
-        _userLotIds[user].push(lotId);
+        _userLotIds[user][assetId].push(lotId);
 
-        userHolding[user] += amountUg;
+        _userHolding[user][assetId][providerId] += amountUg;
 
         _txHistory[user].push(
             StoexTypes.TxRecord({
+                assetId: assetId,
+                providerId: providerId,
                 txType: historyKind,
                 amountUg: amountUg,
                 timestamp: block.timestamp,
@@ -235,7 +308,7 @@ contract GoldNFT is
             })
         );
 
-        emit SupplyIncreased(amountUg, user, lotId);
+        emit SupplyIncreased(assetId, providerId, amountUg, user, lotId);
     }
 
     function updateMetadata(uint256 tokenId, string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -244,9 +317,14 @@ contract GoldNFT is
         emit MetadataUpdated(tokenId, newUri);
     }
 
-    function nomineeTransfer(address fromBeneficiary, address toCustody) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
+    function nomineeTransferForAsset(bytes32 assetId, address fromBeneficiary, address toCustody)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
         if (!whitelistRegistry.isEligible(fromBeneficiary) || !whitelistRegistry.isEligible(toCustody)) revert NotEligible();
-        uint256 tokenId = tokenIdByBeneficiary[fromBeneficiary];
+        uint256 tokenId = _tokenIdByBeneficiary[fromBeneficiary][assetId];
         if (tokenId == 0) revert NoCertificate();
         if (beneficiaryOfToken[tokenId] != fromBeneficiary) revert InvalidBeneficiary();
 
@@ -258,20 +336,16 @@ contract GoldNFT is
         emit NomineeTransferred(fromBeneficiary, toCustody, tokenId);
     }
 
-    function getUserHolding(address user) external view returns (uint256) {
-        return userHolding[user];
-    }
-
     function getMintLot(uint256 lotId) external view returns (StoexTypes.MintLotMeta memory) {
         return _mintLots[lotId];
     }
 
-    function getUserLotIds(address beneficiary) external view returns (uint256[] memory) {
-        return _userLotIds[beneficiary];
+    function getUserLotIds(address beneficiary, bytes32 assetId) external view override returns (uint256[] memory) {
+        return _userLotIds[beneficiary][assetId];
     }
 
-    function getPoolLotIds() external view returns (uint256[] memory) {
-        return _poolLotIds;
+    function getPoolLotIds(bytes32 assetId, bytes32 providerId) external view override returns (uint256[] memory) {
+        return _poolLotIds[assetId][providerId];
     }
 
     function getTxHistory(address user, uint256 start, uint256 end) external view returns (StoexTypes.TxRecord[] memory) {
@@ -300,6 +374,10 @@ contract GoldNFT is
         returns (bool)
     {
         return super.supportsInterface(interfaceId);
+    }
+
+    function _requireActiveProvider(address user, bytes32 assetId, bytes32 providerId) private view {
+        if (_userActiveProvider[user][assetId] != providerId) revert ProviderBindingConflict();
     }
 
     function _canReceiveBuyOrCertificate(address user) private view returns (bool) {
@@ -343,16 +421,11 @@ contract GoldNFT is
         return ERC2771ContextUpgradeable._contextSuffixLength();
     }
 
-    /// @inheritdoc IGoldNFT
-    function circulatingSupply() external view returns (uint256) {
-        return totalGoldSupply - totalAssetProviderBalance;
-    }
-
-    uint256 public totalAssetProviderBalance;
-
-    uint256[42] private __gap;
+    uint256[40] private __gap;
 
     error ZeroAddress();
+    error ZeroAssetId();
+    error ZeroIds();
     error NotEligible();
     error AlreadyHasCertificate();
     error NoCertificate();
@@ -362,4 +435,7 @@ contract GoldNFT is
     error InvalidBeneficiary();
     error Soulbound();
     error BadPagination();
+    error ProviderBindingConflict();
+    error AssetMismatch();
+    error ProviderMismatch();
 }

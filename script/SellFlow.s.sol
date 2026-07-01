@@ -8,7 +8,6 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 import {RelayerScript} from "./helpers/RelayerScript.sol";
 
 /// @title SellFlow
-/// @notice PRD sell flow: relayer relays USER create -> AP approve -> AT approve -> ADMIN execute.
 contract SellFlow is RelayerScript {
     bytes32 private constant _DEFAULT_PAYOUT_REF = 0x53454c4c2d5245462d3030310000000000000000000000000000000000000000;
 
@@ -24,11 +23,13 @@ contract SellFlow is RelayerScript {
         address apAddr = vm.addr(apPk);
         address atAddr = vm.addr(atPk);
 
-        uint256 amountUg = vm.envOr("SELL_AMOUNT_UG", uint256(500_000)); // default 0.5 g
+        bytes32 assetId = _envLabelBytes32("ASSET_LABEL", "GOLD");
+        bytes32 providerId = _envLabelBytes32("PROVIDER_LABEL", "AP1");
+        uint256 amountUg = vm.envOr("SELL_AMOUNT_UG", uint256(500_000));
         bytes32 payoutRef = vm.envOr("SELL_PAYOUT_REF", _DEFAULT_PAYOUT_REF);
 
         vm.startBroadcast(relayerPk);
-        uint256 requestId = trade.createSellRequestFor(user, amountUg, payoutRef);
+        uint256 requestId = trade.createSellRequestFor(user, assetId, providerId, amountUg, payoutRef);
         trade.approveRequestFor(apAddr, requestId);
         trade.approveRequestFor(atAddr, requestId);
         vm.stopBroadcast();

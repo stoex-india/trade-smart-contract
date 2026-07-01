@@ -85,7 +85,7 @@
     "name": "beneficiaryOfToken",
     "inputs": [
       {
-        "name": "",
+        "name": "tokenId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -104,6 +104,16 @@
     "name": "burnFromPool",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -120,7 +130,13 @@
   {
     "type": "function",
     "name": "circulatingSupply",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -134,6 +150,16 @@
     "type": "function",
     "name": "decreaseSupply",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
       {
         "name": "user",
         "type": "address",
@@ -207,6 +233,16 @@
         "internalType": "struct StoexTypes.MintLotMeta",
         "components": [
           {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
             "name": "vaultReceiptId",
             "type": "bytes32",
             "internalType": "bytes32"
@@ -225,11 +261,6 @@
             "name": "depositTimestamp",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "apId",
-            "type": "address",
-            "internalType": "address"
           },
           {
             "name": "vpId",
@@ -254,7 +285,18 @@
   {
     "type": "function",
     "name": "getPoolLotIds",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -310,6 +352,16 @@
         "internalType": "struct StoexTypes.TxRecord[]",
         "components": [
           {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
             "name": "txType",
             "type": "uint8",
             "internalType": "enum StoexTypes.TxType"
@@ -336,31 +388,17 @@
   },
   {
     "type": "function",
-    "name": "getUserHolding",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getUserLotIds",
     "inputs": [
       {
         "name": "beneficiary",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -485,6 +523,11 @@
     "name": "mintCertificate",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "user",
         "type": "address",
         "internalType": "address"
@@ -497,6 +540,11 @@
     "type": "function",
     "name": "mintCertificateForTrade",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
       {
         "name": "user",
         "type": "address",
@@ -511,6 +559,16 @@
     "name": "mintToPool",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
@@ -520,6 +578,16 @@
         "type": "tuple",
         "internalType": "struct StoexTypes.MintLotMeta",
         "components": [
+          {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
           {
             "name": "vaultReceiptId",
             "type": "bytes32",
@@ -539,11 +607,6 @@
             "name": "depositTimestamp",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "apId",
-            "type": "address",
-            "internalType": "address"
           },
           {
             "name": "vpId",
@@ -605,8 +668,13 @@
   },
   {
     "type": "function",
-    "name": "nomineeTransfer",
+    "name": "nomineeTransferForAsset",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
       {
         "name": "fromBeneficiary",
         "type": "address",
@@ -656,6 +724,30 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "providerPoolBalance",
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -864,12 +956,36 @@
   },
   {
     "type": "function",
+    "name": "tokenAssetId",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "tokenIdByBeneficiary",
     "inputs": [
       {
-        "name": "",
+        "name": "beneficiary",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -902,21 +1018,14 @@
   },
   {
     "type": "function",
-    "name": "totalAssetProviderBalance",
-    "inputs": [],
-    "outputs": [
+    "name": "totalSupply",
+    "inputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "totalGoldSupply",
-    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -967,6 +1076,16 @@
     "name": "transferFromAPToUser",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "user",
         "type": "address",
         "internalType": "address"
@@ -981,6 +1100,16 @@
         "type": "tuple",
         "internalType": "struct StoexTypes.MintLotMeta",
         "components": [
+          {
+            "name": "assetId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "providerId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
           {
             "name": "vaultReceiptId",
             "type": "bytes32",
@@ -1000,11 +1129,6 @@
             "name": "depositTimestamp",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "apId",
-            "type": "address",
-            "internalType": "address"
           },
           {
             "name": "vpId",
@@ -1101,12 +1225,46 @@
   },
   {
     "type": "function",
+    "name": "userActiveProvider",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "userHolding",
     "inputs": [
       {
-        "name": "",
+        "name": "user",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -1143,6 +1301,25 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "ActiveProviderCleared",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1236,6 +1413,12 @@
     "type": "event",
     "name": "CertificateMinted",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
       {
         "name": "user",
         "type": "address",
@@ -1352,6 +1535,18 @@
     "name": "PoolInventoryBurned",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "indexed": false,
@@ -1370,6 +1565,18 @@
     "type": "event",
     "name": "PoolInventoryMinted",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -1471,6 +1678,18 @@
     "name": "SupplyDecreased",
     "inputs": [
       {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
         "name": "amountUg",
         "type": "uint256",
         "indexed": false,
@@ -1495,6 +1714,18 @@
     "type": "event",
     "name": "SupplyIncreased",
     "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
       {
         "name": "amountUg",
         "type": "uint256",
@@ -1625,6 +1856,11 @@
   {
     "type": "error",
     "name": "AlreadyHasCertificate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AssetMismatch",
     "inputs": []
   },
   {
@@ -1813,6 +2049,16 @@
   },
   {
     "type": "error",
+    "name": "ProviderBindingConflict",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProviderMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
@@ -1845,6 +2091,16 @@
   {
     "type": "error",
     "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAssetId",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroIds",
     "inputs": []
   }
 ]

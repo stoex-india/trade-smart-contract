@@ -1,6 +1,6 @@
-# STOEX Gold — Smart contracts (Foundry)
+# STOEX — Multi-asset smart contracts (Foundry)
 
-UUPS upgradeable EVM implementation of the **STOEX India Gold NFT Technical PRD v2.0** (Polygon Amoy / EVM-compatible chains), including **Tresori relayer-gated `*For` gasless entrypoints** for user and ops flows.
+UUPS upgradeable EVM stack for **multi-asset, multi-provider** precious-metal tokenization (Polygon Amoy / EVM-compatible chains), with Tresori relayer-gated `*For` gasless entrypoints.
 
 ## Requirements
 
@@ -17,34 +17,76 @@ forge test -vv
 
 | Contract | Proxy address |
 |----------|---------------|
-| **GovernanceConfig** | `0xEc2AaEE5BC7B7967A2c98F59072b9a376202A4a1` |
-| **WhitelistRegistry** | `0x2A31A7b68418Ea301A6667fB7F1078170986EC98` |
-| **GoldNFT** | `0x8C26b220472AB8A8a1627087F3F2612768fA171D` |
-| **EscrowVault** | `0x0E4e5bb30162104736F0a718984fa48DFBB383C2` |
-| **TimelockController** | `0xF12b3226abeb60930C5Ae9aB86846FE1cc5FBd41` |
-| **TradeManager** | `0x11c3048159305517ccEACEBA17531996148324aA` |
+| **GovernanceConfig** | `0x9d8712D90Af381829fb97eC16D44C063DF30f19e` |
+| **AssetRegistry** | `0x57a01603dDb311d8b394dcE78062394b578622Eb` |
+| **AssetProviderRegistry** | `0x3FC8b7DA2fa7801a81F6e59a8929e54636D51e93` |
+| **AssetProviderRegistry impl** (current) | `0xfD4D0871725535a3a7d6fe2EFc685A123556Ad18` |
+| **WhitelistRegistry** | `0xE5603C1e95F433E01A4737bf8d800f10D19648A8` |
+| **AssetLedger** | `0x411Ae02A0DA08D51EeD84fFBD58cE385E0fF9fb3` |
+| **EscrowVault** | `0xB33D00a16de5F9eB77753b0251E6af92b8c5AF5B` |
+| **TimelockController** | `0x109c4ce0db4a98e107D631f2ADF70166587985f4` |
+| **TradeManager** | `0x1bD7e862C403244650B9028C2eDBcC7a0480f547` |
+| **TradeManagerLib** (linked library) | `0xace904fd78507458f3d55d8b0efdd721747445a6` |
 | **Tresori relayer** (`RELAYER_SMART_CONTRACT`) | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
-**Frontend onboarding:** see [docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md) (register → verify KYC → `cast` buy-readiness checks).
+**On-chain admin:** deployer `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` (used for initial wiring). To hand off to ops admin `INITIAL_ADMIN` in `.env`, call `transferAdmin` on each proxy from the deployer key.
 
-**Admin roles:** see [docs/FRONTEND_ADMIN_ROLES.md](docs/FRONTEND_ADMIN_ROLES.md) (grant AP/VP/AT, transfer admin, verify `hasRole`).
+**Frontend integration:** see [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) (onboarding, admin roles, mint, buy, sell, reject).
 
-**Mint / AP pool:** see [docs/FRONTEND_MINT_FLOW.md](docs/FRONTEND_MINT_FLOW.md) (propose → approve → execute → pool funded → buys enabled).
+**Architecture:** see [docs/SMART_CONTRACTS_OVERVIEW.md](docs/SMART_CONTRACTS_OVERVIEW.md).
 
-**User buy:** see [docs/FRONTEND_BUY_FLOW.md](docs/FRONTEND_BUY_FLOW.md) (single gasless `createBuyRequestFor` → immediate `Executed`).
+Redeployed **June 2026** — multi-asset stack (`AssetRegistry`, `AssetProviderRegistry`, `AssetLedger`) with relayer-gated `*For` gasless entrypoints.
 
-Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori relayer passes explicit wallet/actor; `registerUser` removed).
+### Asset provider IDs and display names
+
+- **Provider ID** (`bytes32`): `keccak256("AP1")` — immutable slug; used in all `TradeManager` calls.
+- **Display name** (`string`): stored on `AssetProviderRegistry`; admin updates anytime via **`updateProviderName`** (upgraded on Amoy June 2026).
+
+**Registered on Amoy today:**
+
+| Label | `providerId` | Current name |
+|-------|----------------|--------------|
+| `AP1` | `0x18b117340645cfb38a7414f6a51f090965f4e22ead292d9dad633e05e91ff811` | **MMTC** |
+
+**Change display name** (admin key with `DEFAULT_ADMIN_ROLE`):
+
+```shell
+source .env
+RPC=https://rpc-amoy.polygon.technology   # or $AMOY_RPC_URL
+PR=$ASSET_PROVIDER_REGISTRY
+AP1=$(cast keccak "AP1")
+
+# Read current name
+cast call $PR "getProvider(bytes32)(bool,string)" $AP1 --rpc-url $RPC
+
+# Set new display name (example: MMTC)
+cast send $PR "updateProviderName(bytes32,string)" $AP1 "MMTC" \
+  --rpc-url $RPC --private-key $PRIVATE_KEY --legacy --gas-price 35gwei
+
+# Confirm
+cast call $PR "getProvider(bytes32)(bool,string)" $AP1 --rpc-url $RPC
+```
+
+**UUPS upgrade** (after contract changes to `AssetProviderRegistry`):
+
+```shell
+forge script script/UpgradeAssetProviderRegistry.s.sol:UpgradeAssetProviderRegistry \
+  --rpc-url https://rpc-amoy.polygon.technology --broadcast --legacy --with-gas-price 35gwei
+```
+
+Paste the logged **new implementation** address into `.env` as `ASSET_PROVIDER_REGISTRY_IMPL`.
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
-| `src/` | Core contracts (`GovernanceConfig`, `WhitelistRegistry`, `GoldNFT`, `EscrowVault`, `TimelockController`, `TradeManager`) |
+| `src/` | Core contracts (`AssetRegistry`, `AssetProviderRegistry`, `AssetLedger`, `GovernanceConfig`, `WhitelistRegistry`, `EscrowVault`, `TimelockController`, `TradeManager`) |
 | `src/base/` | `StoexDeployerAdminUpgradeable` — deployer → initial admin handoff + `transferAdmin` |
-| `src/libraries/` | `StoexTypes`, `StoexRoles` |
+| `src/libraries/` | `StoexTypes`, `StoexRoles`, `StoexIds`, `TradeManagerLib` |
 | `src/interfaces/` | Integration interfaces |
-| `script/DeployAmoy.s.sol` | Deploy all proxies; deployer calls `setInitialAdmin`; wires routing if deployer == admin |
-| `script/WireProxiesAdmin.s.sol` | Admin-only: `setRoutingAddresses`, `setTradeManager`, `TRADE_MANAGER_ROLE` when admin ≠ deployer |
+| `script/DeployAmoy.s.sol` | Deploy all proxies; register GOLD/SILVER + default provider |
+| `script/UpgradeAssetProviderRegistry.s.sol` | UUPS upgrade `AssetProviderRegistry` (e.g. `updateProviderName`) |
+| `script/WireProxiesAdmin.s.sol` | Admin-only: `setTradeManager`, `TRADE_MANAGER_ROLE` when admin ≠ deployer |
 | `script/SetInitialAdmins.s.sol` | Optional: deployer calls `setInitialAdmin` on all proxies (if not done in deploy tx) |
 | `script/GovernanceAdminFlags.s.sol` | Admin toggles `GovernanceConfig.vpRequiredForApprovals` |
 | `script/ConfigureRoles.s.sol` | Grant AP/VP/AT/PAP/Auditor + optional forwarder rotation (**admin** key) |
@@ -57,9 +99,7 @@ Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori 
 | `test/helpers/StoexFixture.sol` | Shared deployment for tests |
 | `test/StoexPRD.t.sol` | PRD-mapped integration tests |
 | `docs/` | Integration and API documentation for contracts + SDK-driven gasless flows |
-| `docs/FRONTEND_USER_ONBOARDING.md` | **User onboarding** — gasless `registerUserFor`, admin `verifyKYC` |
-| `docs/FRONTEND_ADMIN_ROLES.md` | **Admin panel** — grant AP/VP/AT, `transferAdmin`, `hasRole` verification |
-| `docs/FRONTEND_MINT_FLOW.md` | **Mint ops** — `proposeMintFor` → VP → AT → execute |
+| `docs/FRONTEND_INTEGRATION.md` | **Frontend** — onboarding, admin roles, mint, buy, sell, reject |
 
 ---
 
@@ -76,20 +116,23 @@ Redeployed **June 2026** with relayer-gated `*For` gasless entrypoints (Tresori 
 - **`registerUserFor(address wallet, bytes32 userId, string kycRef)`** — gasless self-registration via Tresori relayer; explicit `wallet` (MPC `fromAddress`). Grants `USER_ROLE` on registry + `TradeManager`.
 - **`adminRegisterUser(bytes32 userId, address wallet, string kycRef)`** — admin back-office path (same role grants).
 - **`isEligibleForNonKycUser`** is true for **Pending** KYC users. They may **`createBuyRequestFor` only**, subject to **`GovernanceConfig.nonKycMaxBuyFiatAmount`**.
-- **`verifyKYC`** (admin) moves a user to **Verified** → **`isEligible`** is true → sell, redeem, full daily buy cap (`dailyBuyCap`), mint/burn bookkeeping paths, nominee transfer, etc., as before.
+- **`verifyKYCFor`** (via Tresori relayer only) moves a user to **Verified** → **`isEligible`** is true → sell, redeem, full daily buy cap (`dailyBuyCap`), etc.
 - **`rejectKYC`** users are not eligible for the non-KYC buy path.
 
-### Gold supply accounting (`GoldNFT`)
+### Multi-asset supply accounting (`AssetLedger`)
 
-All gold integers are **micrograms (µg)** unless noted otherwise. **`1 gram = 1_000_000 µg`**. Off-chain UI may display grams using `GovernanceConfig.goldPrecision()` (default **6**).
+All amounts are **micrograms (µg)**. Trade calls require **`assetId`** and **`providerId`** (`bytes32`, e.g. `keccak256("GOLD")`, `keccak256("AP1")`).
 
-- **`totalGoldSupply`**: µg on-chain; increases on PRD **mint** (`mintToPool`), decreases on **redeem** and **burn** (`burnFromPool`).
-- **`totalAssetProviderBalance`**: µg in the **Asset Provider buy pool** (unsold retail inventory). Increases on **mint** and **sell** returns; decreases on **buy** (`transferFromAPToUser`) and **burn**. Users do not receive gold on mint — mint loads the pool only.
-- **`circulatingSupply()`** = **`totalGoldSupply - totalAssetProviderBalance`** (= aggregate user holdings).
+- **`providerPoolBalance(assetId, providerId)`** — unsold AP retail pool per provider slice.
+- **`userHolding(user, assetId, providerId)`** — user balance for that slice.
+- **`userActiveProvider(user, assetId)`** — one provider per asset at a time (cleared when balance hits zero).
+- **`totalSupply(assetId)`**, **`circulatingSupply(assetId)`**.
 
-**Buy** validates pool depth, eligibility, `minimumBuyGoldValueInUg`, per-tx / daily caps, and non-KYC fiat cap; then **credits the user in the same transaction** (no `executeRequest`).
+Sell/redeem payout addresses: **`AssetProviderRegistry.getSellPayout(providerId, assetId)`** / **`getRedeemSink`**.
 
-**Redeploy note:** this repo does not ship on-chain data migration. Deploy fresh proxies and fund the AP pool via **mint flow** before enabling retail buys.
+**Buy:** `createBuyRequestFor(user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash)` — auto-executes.
+
+**Redeploy note:** fresh proxies only; mint inventory per `(assetId, providerId)` before retail buys.
 
 ### 1) Install Foundry and clone
 
@@ -241,7 +284,7 @@ cast call $GOLD_NFT "hasRole(bytes32,address)(bool)" $AP_ROLE $ROLE_AP --rpc-url
 
 ### 6) Onboard investors
 
-**Production (frontend):** users call **`registerUserFor(wallet, userId, kycRef)`** gasless on `WhitelistRegistry`; admin calls **`verifyKYC(wallet)`** from a secure backend. Full flow: **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)**.
+**Production (frontend):** users call **`registerUserFor`** and **`verifyKYCFor`** gasless on `WhitelistRegistry`. Full flow: **[docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md)**.
 
 **Script back-office (`OnboardInvestors`):** admin-driven batch onboarding for test wallets.
 
@@ -312,7 +355,7 @@ cast call $WHITELIST_REGISTRY "getProfile(address)((bytes32,address,uint8,uint8,
 cast call $GOLD_NFT "totalAssetProviderBalance()(uint256)" --rpc-url $AMOY_RPC_URL
 ```
 
-See **[docs/FRONTEND_USER_ONBOARDING.md](docs/FRONTEND_USER_ONBOARDING.md)** for a full per-wallet “ready to buy” checklist and one-liner ops script.
+See **[docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md)** for frontend onboarding, buy readiness checks, and SDK examples.
 
 ### 7) Run operations (PRD flows)
 

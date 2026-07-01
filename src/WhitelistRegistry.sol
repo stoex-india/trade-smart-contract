@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — WhitelistRegistry
-/// @notice On-chain **KYC / wallet / compliance** state. `isEligible` is the single gate used by `GoldNFT` and user-facing `TradeManager` flows.
+/// @notice On-chain **KYC / wallet / compliance** state. `isEligible` is the single gate used by `AssetLedger` and user-facing `TradeManager` flows.
 /// @dev UUPS upgradeable. Important roles (same `AccessControl` pattern as PRD):
 /// - `DEFAULT_ADMIN_ROLE`: admin-register users, KYC, wallet risk, suspend/blacklist; grant `USER_ROLE` for wallet-change requests.
-/// - Self-service: gasless `registerUserFor` (relayer passes explicit wallet); admin may `adminRegisterUser` for back-office onboarding.
+/// - Self-service: gasless `registerUserFor` and `verifyKYCFor` (relayer passes explicit wallet); admin may `adminRegisterUser` for back-office onboarding.
 /// - `USER_ROLE`: investor may `requestWalletChangeFor` for their own wallet via relayer.
 /// - `AT_ROLE`: co-approve wallet migration with admin; `unsuspendWallet` override.
 /// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
@@ -119,12 +119,17 @@ contract WhitelistRegistry is
         emit UserRegistered(wallet, userId);
     }
 
-    function verifyKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        StoexTypes.UserProfile storage p = _profiles[wallet];
-        if (!_registered[wallet]) revert NotRegistered();
+    function verifyKYCFor(address user) external onlyTrustedForwarder {
+        _verifyKYC(user);
+    }
+
+    function _verifyKYC(address user) private {
+        if (!_registered[user]) revert NotRegistered();
+        StoexTypes.UserProfile storage p = _profiles[user];
+        if (p.kycStatus != StoexTypes.KYCStatus.Pending) revert KycNotPending();
         StoexTypes.KYCStatus old_ = p.kycStatus;
         p.kycStatus = StoexTypes.KYCStatus.Verified;
-        emit KYCStatusChanged(wallet, old_, p.kycStatus);
+        emit KYCStatusChanged(user, old_, p.kycStatus);
     }
 
     function rejectKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -286,4 +291,5 @@ contract WhitelistRegistry is
     error NotWalletOwner();
     error InvalidRequest();
     error AlreadyProcessed();
+    error KycNotPending();
 }

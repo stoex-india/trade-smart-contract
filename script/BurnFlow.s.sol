@@ -8,7 +8,6 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 import {RelayerScript} from "./helpers/RelayerScript.sol";
 
 /// @title BurnFlow
-/// @notice PRD burn flow: relayer relays AP propose -> VP approve -> AT approve -> ADMIN execute.
 contract BurnFlow is RelayerScript {
     bytes32 private constant _DEFAULT_BURN_REF = 0x4255524e2d5245462d3030310000000000000000000000000000000000000000;
 
@@ -25,12 +24,14 @@ contract BurnFlow is RelayerScript {
         address vpAddr = vm.addr(vpPk);
         address atAddr = vm.addr(atPk);
 
+        bytes32 assetId = _envLabelBytes32("ASSET_LABEL", "GOLD");
+        bytes32 providerId = _envLabelBytes32("PROVIDER_LABEL", "AP1");
         uint256 amountUg = vm.envOr("BURN_AMOUNT_UG", uint256(500_000));
         bytes32 referenceId = vm.envOr("BURN_REF_ID", _DEFAULT_BURN_REF);
         string memory reason = vm.envOr("BURN_REASON", string("Ops burn"));
 
         vm.startBroadcast(relayerPk);
-        uint256 requestId = trade.proposeBurnFor(apAddr, amountUg, referenceId, reason);
+        uint256 requestId = trade.proposeBurnFor(apAddr, assetId, providerId, amountUg, referenceId, reason);
         trade.approveRequestFor(vpAddr, requestId);
         trade.approveRequestFor(atAddr, requestId);
         vm.stopBroadcast();

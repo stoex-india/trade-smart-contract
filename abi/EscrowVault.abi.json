@@ -45,6 +45,19 @@
   },
   {
     "type": "function",
+    "name": "assetLedger",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IAssetLedger"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "deployer",
     "inputs": [],
     "outputs": [
@@ -64,6 +77,16 @@
         "name": "wallet",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -90,6 +113,16 @@
         "name": "user",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "amountUg",
@@ -122,6 +155,16 @@
         "name": "wallet",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -148,19 +191,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "goldNFT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IGoldNFT"
       }
     ],
     "stateMutability": "view"
@@ -217,7 +247,7 @@
         "internalType": "address"
       },
       {
-        "name": "goldNFT_",
+        "name": "assetLedger_",
         "type": "address",
         "internalType": "address"
       }
@@ -233,6 +263,16 @@
         "name": "wallet",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "amountUg",
@@ -601,6 +641,18 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       },
       {
         "name": "amountUg",

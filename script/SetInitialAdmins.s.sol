@@ -5,15 +5,14 @@ import {Script, console2} from "forge-std/Script.sol";
 
 import {GovernanceConfig} from "../src/GovernanceConfig.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
-import {GoldNFT} from "../src/GoldNFT.sol";
+import {AssetRegistry} from "../src/AssetRegistry.sol";
+import {AssetProviderRegistry} from "../src/AssetProviderRegistry.sol";
+import {AssetLedger} from "../src/AssetLedger.sol";
 import {EscrowVault} from "../src/EscrowVault.sol";
 import {TimelockController} from "../src/TimelockController.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 
 /// @title SetInitialAdmins
-/// @notice Deployer-only: calls `setInitialAdmin` on all core proxies after deployment (if not batched in `DeployAmoy`).
-/// @dev Required env: `PRIVATE_KEY` = deployer, `INITIAL_ADMIN`, plus `GOVERNANCE_CONFIG`, `WHITELIST_REGISTRY`, `GOLD_NFT`,
-/// `ESCROW_VAULT`, `TIMELOCK_CONTROLLER`, `TRADE_MANAGER`.
 contract SetInitialAdmins is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
@@ -23,7 +22,9 @@ contract SetInitialAdmins is Script {
 
         GovernanceConfig(vm.envAddress("GOVERNANCE_CONFIG")).setInitialAdmin(initialAdmin);
         WhitelistRegistry(vm.envAddress("WHITELIST_REGISTRY")).setInitialAdmin(initialAdmin);
-        GoldNFT(vm.envAddress("GOLD_NFT")).setInitialAdmin(initialAdmin);
+        AssetRegistry(vm.envAddress("ASSET_REGISTRY")).setInitialAdmin(initialAdmin);
+        AssetProviderRegistry(vm.envAddress("ASSET_PROVIDER_REGISTRY")).setInitialAdmin(initialAdmin);
+        AssetLedger(vm.envAddress("ASSET_LEDGER")).setInitialAdmin(initialAdmin);
         EscrowVault(vm.envAddress("ESCROW_VAULT")).setInitialAdmin(initialAdmin);
         TimelockController(vm.envAddress("TIMELOCK_CONTROLLER")).setInitialAdmin(initialAdmin);
         TradeManager(vm.envAddress("TRADE_MANAGER")).setInitialAdmin(initialAdmin);
