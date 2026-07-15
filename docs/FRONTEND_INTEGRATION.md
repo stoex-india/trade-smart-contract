@@ -16,6 +16,8 @@ Use ABIs from `abi/*.abi.json`.
 | AssetProviderRegistry | `0x3FC8b7DA2fa7801a81F6e59a8929e54636D51e93` |
 | WhitelistRegistry | `0xE5603C1e95F433E01A4737bf8d800f10D19648A8` |
 | GovernanceConfig | `0x9d8712D90Af381829fb97eC16D44C063DF30f19e` |
+| TimelockController | `0x109c4ce0db4a98e107D631f2ADF70166587985f4` |
+| EscrowVault | `0xB33D00a16de5F9eB77753b0251E6af92b8c5AF5B` |
 | Tresori relayer | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
 ---
@@ -42,12 +44,14 @@ const AP2    = keccak256(toUtf8Bytes("AP2"));
 
 ### Providers
 
-| Label (slug) | `providerId` (`bytes32`) | Display name (on-chain) | Operator wallet |
-|--------------|--------------------------|-------------------------|-----------------|
-| `AP1` | `0x18b117340645cfb38a7414f6a51f090965f4e22ead292d9dad633e05e91ff811` | **MMTC** | `0x4f30c25BCf96fa0c93e135ED73baA78D5a27999D` |
-| `AP2` | `0x8e02c38093eb2f04539e87bd66824c36f9a6e087fe915d21716d4c6d77434c62` | **amrapali** | `0x3E12A663687CD93d33447945C35c42dD598A6E3A` |
+| Label (slug) | `providerId` (`bytes32`) | Display name (on-chain) |
+|--------------|--------------------------|-------------------------|
+| `AP1` | `0x18b117340645cfb38a7414f6a51f090965f4e22ead292d9dad633e05e91ff811` | **MMTC** |
+| `AP2` | `0x8e02c38093eb2f04539e87bd66824c36f9a6e087fe915d21716d4c6d77434c62` | **amrapali** |
 
 **Important:** Pass `keccak256("AP1")` or `keccak256("AP2")` as `providerId` in all `TradeManager` calls. Display names (**MMTC**, **amrapali**) come from `getProvider(providerId)` only — do not hash the display name unless that slug is registered separately.
+
+**Operator wallets:** read from chain — `getOperators(providerId)` or `isOperator(providerId, wallet)` on `AssetProviderRegistry`. **Currently empty on Amoy** until admin registers (section 5). Admin registers via section 5.
 
 **Registered on Amoy:** assets `GOLD`, `SILVER` · providers **`AP1`** (MMTC) and **`AP2`** (amrapali), both supporting GOLD and SILVER.
 
@@ -65,8 +69,12 @@ const AP2    = keccak256(toUtf8Bytes("AP2"));
 | User | `createSellRequestFor` | TradeManager | Yes |
 | AP | `proposeMintFor` | TradeManager | Yes |
 | AP / VP / AT / PAP | `approveRequestFor` | TradeManager | Yes |
-| Admin | `grantRole` | TradeManager, AssetLedger, etc. | **No** |
-| Admin | `executeRequest` | TradeManager | **No** |
+| Admin | `grantRole`, `addProviderOperator`, `registerProvider`, etc. | AssetProviderRegistry, TradeManager, AssetLedger, … | **No** — use `writeMpcSmartContractTransaction` |
+| Admin | `executeRequest` | TradeManager | **No** — use `writeMpcSmartContractTransaction` |
+
+**Gasless** (`writeGaslessMpcSmartContractTransaction`): only contracts with a trusted forwarder and `*For` entrypoints — `TradeManager`, `WhitelistRegistry`, `AssetLedger`. The relayer is `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D`.
+
+**Admin / paid** (`writeMpcSmartContractTransaction`): admin MPC wallet signs and broadcasts directly on `rpcUrl`. **`AssetProviderRegistry` has no forwarder** — gasless calls to it will not change state (relayer tx may succeed but inner call fails).
 
 **Gasless pattern (Tresori):** always pass the **wallet** as the first argument in `*For` functions. Use `fromAddress` = that same wallet in the SDK.
 
@@ -128,9 +136,9 @@ await whitelist.isEligible(userWallet); // true → buy, sell, redeem allowed
 
 ---
 
-## 5. Admin — roles & provider setup (normal tx)
+## 5. Admin — roles & provider setup (paid MPC tx)
 
-Admin wallet sends **paid** transactions (not gasless). Used from your **admin panel / backend**, not the user app.
+Admin MPC wallet uses **`writeMpcSmartContractTransaction`** (not gasless). Used from your **admin panel / backend**, not the user app.
 
 **Role constants:** `keccak256("AP_ROLE")`, `keccak256("VP_ROLE")`, `keccak256("AT_ROLE")`, `keccak256("PAP_ROLE")`.
 
@@ -153,19 +161,50 @@ AP mint/approve will **not** work unless **both** are done:
 
 ```ts
 const AP_ROLE = keccak256(toUtf8Bytes("AP_ROLE"));
-const providerId = keccak256(toUtf8Bytes("AP1")); // slug, not display name
+const AP1 = keccak256(toUtf8Bytes("AP1"));
+const adminWallet = "0xb4451002742d6589781C5AfA6A213c8F6c1db087";
+const apWallet = "0x2FF6463BC8d5264163063b68897B6B603C5aF9c4";
 
-await tradeManager.grantRole(AP_ROLE, apWallet);
-await assetLedger.grantRole(AP_ROLE, apWallet);
-await timelock.grantRole(AP_ROLE, apWallet);
-await assetProviderRegistry.addProviderOperator(providerId, apWallet);
+const TRADE_MANAGER = "0x1bD7e862C403244650B9028C2eDBcC7a0480f547";
+const ASSET_LEDGER = "0x411Ae02A0DA08D51EeD84fFBD58cE385E0fF9fb3";
+const TIMELOCK_CONTROLLER = "0x109c4ce0db4a98e107D631f2ADF70166587985f4";
+const ASSET_PROVIDER_REGISTRY = "0x3FC8b7DA2fa7801a81F6e59a8929e54636D51e93";
+
+// 1 — register operator on AssetProviderRegistry (PAID, not gasless)
+await TreSori().writeMpcSmartContractTransaction({
+  contractAddress: ASSET_PROVIDER_REGISTRY,
+  functionName: "addProviderOperator",
+  params: [AP1, apWallet],
+  abi: ["function addProviderOperator(bytes32 providerId, address wallet)"],
+  fromAddress: adminWallet,
+  chain,
+  clientShare,
+  sessionId,
+  rpcUrl: AMOY_RPC_URL,
+});
+
+// 2 — AP_ROLE on three contracts (same SDK method, repeat per contract)
+for (const addr of [TRADE_MANAGER, ASSET_LEDGER, TIMELOCK_CONTROLLER]) {
+  await TreSori().writeMpcSmartContractTransaction({
+    contractAddress: addr,
+    functionName: "grantRole",
+    params: [AP_ROLE, apWallet],
+    abi: ["function grantRole(bytes32 role, address account)"],
+    fromAddress: adminWallet,
+    chain,
+    clientShare,
+    sessionId,
+    rpcUrl: AMOY_RPC_URL,
+  });
+}
 ```
 
-**Verify:**
+**Verify (read — any RPC, no gas):**
 
 ```ts
-await tradeManager.hasRole(AP_ROLE, apWallet);
-await assetProviderRegistry.isOperator(providerId, apWallet); // must be true
+await assetProviderRegistry.isOperator(AP1, apWallet); // must be true
+await tradeManager.hasRole(AP_ROLE, apWallet);         // must be true
+await assetProviderRegistry.getOperators(AP1);         // includes apWallet
 ```
 
 ### Change AP operator wallet
