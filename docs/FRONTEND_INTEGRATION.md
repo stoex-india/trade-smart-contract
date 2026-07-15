@@ -67,6 +67,7 @@ const AP2    = keccak256(toUtf8Bytes("AP2"));
 | User | `verifyKYCFor` | WhitelistRegistry | Yes |
 | User | `createBuyRequestFor` | TradeManager | Yes |
 | User | `createSellRequestFor` | TradeManager | Yes |
+| User | `createRedeemRequestFor` | TradeManager | Yes |
 | AP | `proposeMintFor` | TradeManager | Yes |
 | AP / VP / AT / PAP | `approveRequestFor` | TradeManager | Yes |
 | Admin | `grantRole`, `addProviderOperator`, `registerProvider`, etc. | AssetProviderRegistry, TradeManager, AssetLedger, … | **No** — use `writeMpcSmartContractTransaction` |
@@ -401,7 +402,129 @@ await tradeManager.getRequestStatus(requestId); // Executed
 
 ---
 
-## 9. Useful read calls (no gas)
+## 9. User redeem (physical delivery)
+
+Redeem = user takes **physical metal** (not fiat). Tokens are escrow-locked until execute; then released to provider `redeemSink`.
+
+**Approvals (Amoy):** AP → PAP → AT · then admin **executeRequest**  
+(VP is skipped when `vpRequiredForApprovals` is `false`.)
+
+### Prerequisites (read)
+
+```ts
+await whitelist.isEligible(userWallet);                        // must be true (KYC)
+await assetLedger.userHolding(userWallet, GOLD, AP1);          // >= amountUg
+await assetLedger.userActiveProvider(userWallet, GOLD);        // must be AP1
+await governance.minRedeemAmountUg();                          // Amoy = 10_000_000 (10g)
+```
+
+### Step 1 — User creates redeem (gasless)
+
+**Function:** `createRedeemRequestFor(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg, bytes32 deliveryRefId)`
+
+Requires `isEligible(user)` === true. Amount must be **≥ `minRedeemAmountUg`** (10g on Amoy).
+
+```ts
+const amountUg = 10_000_000n; // 10 grams (minimum on Amoy)
+const deliveryRef = id("delivery-pickup-001"); // off-chain delivery / pickup reference
+
+const res = await TreSori().writeGaslessMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "createRedeemRequestFor",
+  params: [userWallet, GOLD, AP1, amountUg, deliveryRef],
+  abi: [
+    "function createRedeemRequestFor(address user,bytes32 assetId,bytes32 providerId,uint256 amountUg,bytes32 deliveryRefId) returns (uint256 requestId)",
+  ],
+  fromAddress: userWallet,
+  chain, clientShare, sessionId, rpcUrl,
+});
+
+// requestId from SDK (do not use a missing result.requestId field)
+const requestId = res.decodedResult ?? BigInt(res.rawResult).toString();
+```
+
+On create: metal is **locked in escrow**. Save `requestId`.
+
+### Step 2 — AP approves (gasless)
+
+```ts
+await TreSori().writeGaslessMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "approveRequestFor",
+  params: [apWallet, requestId],
+  abi: ["function approveRequestFor(address approver,uint256 requestId)"],
+  fromAddress: apWallet,
+  chain, clientShare, sessionId, rpcUrl,
+});
+```
+
+AP must have `AP_ROLE` and `isOperator(providerId, apWallet)`.
+
+### Step 3 — PAP approves (gasless)
+
+```ts
+await TreSori().writeGaslessMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "approveRequestFor",
+  params: [papWallet, requestId],
+  abi: ["function approveRequestFor(address approver,uint256 requestId)"],
+  fromAddress: papWallet,
+  chain, clientShare, sessionId, rpcUrl,
+});
+```
+
+PAP wallet needs `PAP_ROLE` on TradeManager.
+
+### Step 4 — AT approves (gasless)
+
+```ts
+await TreSori().writeGaslessMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "approveRequestFor",
+  params: [atWallet, requestId],
+  abi: ["function approveRequestFor(address approver,uint256 requestId)"],
+  fromAddress: atWallet,
+  chain, clientShare, sessionId, rpcUrl,
+});
+```
+
+### Step 5 — Admin executes (paid MPC — not gasless)
+
+```ts
+await TreSori().writeMpcSmartContractTransaction({
+  contractAddress: TRADE_MANAGER,
+  functionName: "executeRequest",
+  params: [requestId],
+  abi: ["function executeRequest(uint256 requestId)"],
+  fromAddress: adminWallet,
+  chain, clientShare, sessionId, rpcUrl,
+});
+```
+
+**On-chain effect:** escrow released to `redeemSink`; user holding decreased; status → Executed.
+
+### Step 6 — Verify + off-chain delivery
+
+```ts
+await assetLedger.userHolding(userWallet, GOLD, AP1); // decreased
+await tradeManager.getRequestStatus(requestId);       // 5 = Executed
+```
+
+Off-chain: AP/PAP fulfill physical pickup/shipment using `deliveryRefId`.
+
+### Sell vs redeem (quick)
+
+| | Sell | Redeem |
+|---|------|--------|
+| User gets | Fiat (off-chain) | Physical metal |
+| Create fn | `createSellRequestFor` | `createRedeemRequestFor` |
+| Ref field | `payoutRefId` | `deliveryRefId` |
+| Approvals (Amoy) | AP → AT | AP → **PAP** → AT |
+| Min amount | tx / sell caps | **`minRedeemAmountUg` (10g Amoy)** |
+
+---
+
+## 10. Useful read calls (no gas)
 
 | What | Contract | Function |
 |------|----------|----------|
@@ -411,25 +534,28 @@ await tradeManager.getRequestStatus(requestId); // Executed
 | AP pool depth | AssetLedger | `providerPoolBalance(assetId, providerId)` |
 | Asset active? | AssetRegistry | `isActive(assetId)` |
 | Provider name | AssetProviderRegistry | `getProvider(providerId)` |
+| Redeem sink | AssetProviderRegistry | `getRedeemSink(providerId, assetId)` |
 | Request status | TradeManager | `getRequestStatus(requestId)` |
 | Min buy / caps | GovernanceConfig | `minimumBuyValueInUg(assetId)`, `maxAmountPerTx()` |
+| Min redeem | GovernanceConfig | `minRedeemAmountUg()` |
 
 ---
 
-## 10. End-to-end order
+## 11. End-to-end order
 
 ```
-1. Admin: grant AP / VP / AT roles + `addProviderOperator` for AP
+1. Admin: grant AP / VP / AT / PAP roles + `addProviderOperator` for AP
 2. Admin: mint GOLD/SILVER to AP1 pool (mint flow)
 3. User: registerUserFor
 4. User: verifyKYCFor (after off-chain KYC)
 5. User: createBuyRequestFor (GOLD + AP1)
 6. User: createSellRequestFor → AP + AT approve → admin executeRequest
+7. User: createRedeemRequestFor → AP + PAP + AT approve → admin executeRequest
 ```
 
 ---
 
-## 11. Reject / cancel a pending request
+## 12. Reject / cancel a pending request
 
 Does **not** apply to **Buy** (buys auto-execute).
 
