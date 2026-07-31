@@ -122,8 +122,9 @@ contract DeployAmoy is Script {
     }
 
     function _configureDeployment(Deployment memory d, address initialAdmin, address) private {
-        address apOperator = vm.envOr("ROLE_AP", initialAdmin);
-        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", apOperator);
+        // Optional operator — omit ROLE_AP to register provider without an operator (onboard later).
+        address apOperator = vm.envOr("ROLE_AP", address(0));
+        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", initialAdmin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
         bytes32 providerId = keccak256(bytes(vm.envOr("DEFAULT_PROVIDER_LABEL", string("AP1"))));
 
@@ -131,8 +132,10 @@ contract DeployAmoy is Script {
         AssetRegistry(d.assetReg).registerAsset(StoexIds.SILVER, "AG", "Silver", 6);
 
         AssetProviderRegistry pr = AssetProviderRegistry(d.providerReg);
-        pr.registerProvider(providerId, vm.envOr("DEFAULT_PROVIDER_NAME", string("Default AP")));
-        pr.addProviderOperator(providerId, apOperator);
+        pr.registerProvider(providerId, vm.envOr("DEFAULT_PROVIDER_NAME", string("MMTC")));
+        if (apOperator != address(0)) {
+            pr.addProviderOperator(providerId, apOperator);
+        }
         pr.setProviderAsset(providerId, StoexIds.GOLD, true);
         pr.setProviderAsset(providerId, StoexIds.SILVER, true);
         pr.setAssetRouting(providerId, StoexIds.GOLD, apPayout, rSink);

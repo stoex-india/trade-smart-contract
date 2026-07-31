@@ -2,8 +2,9 @@
 pragma solidity ^0.8.24;
 
 /// @title AssetLedger
-/// @notice Soulbound ERC-721 certificates (one per user per asset) and multi-provider inventory accounting.
-/// @dev Amounts are integer micrograms (µg). `providerPoolBalance` is unsold AP retail inventory per (asset, provider).
+/// @notice Soulbound ERC-721 certificates (one per user per asset) and circulating-supply accounting.
+/// @dev V1: no provider pool inventory. Circulating increases on buy and decreases on sell/redeem.
+///      Lifetime counters track provider volume: issued / sold-back / redeemed.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
@@ -35,9 +36,11 @@ contract AssetLedger is
     uint256 public nextTokenId;
     uint256 private _nextLotId;
 
+    // --- Legacy pool slots (unused in V1; retained for UUPS storage layout) ---
     mapping(bytes32 assetId => uint256) private _totalSupply;
     mapping(bytes32 assetId => uint256) private _totalPoolBalance;
     mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _providerPoolBalance;
+
     mapping(address user => mapping(bytes32 assetId => mapping(bytes32 providerId => uint256))) private _userHolding;
     mapping(address user => mapping(bytes32 assetId => bytes32)) private _userActiveProvider;
     mapping(address user => mapping(bytes32 assetId => uint256)) private _tokenIdByBeneficiary;
@@ -52,11 +55,16 @@ contract AssetLedger is
     address private _trustedForwarderValue;
     string private _baseTokenUri;
 
+    // --- V1 circulating + lifetime volume ---
+    mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _circulating;
+    mapping(bytes32 assetId => uint256) private _totalCirculating;
+    mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _lifetimeIssued;
+    mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _lifetimeSoldBack;
+    mapping(bytes32 assetId => mapping(bytes32 providerId => uint256)) private _lifetimeRedeemed;
+
     event CertificateMinted(bytes32 indexed assetId, address indexed user, uint256 tokenId);
     event SupplyIncreased(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, address indexed user, uint256 lotId);
     event SupplyDecreased(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, address indexed user, StoexTypes.TxType txType);
-    event PoolInventoryMinted(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, uint256 lotId, uint256 requestId);
-    event PoolInventoryBurned(bytes32 indexed assetId, bytes32 indexed providerId, uint256 amountUg, uint256 requestId);
     event MetadataUpdated(uint256 tokenId, string uri);
     event NomineeTransferred(address indexed fromBeneficiary, address indexed toCustody, uint256 tokenId);
     event WhitelistRegistryUpdated(address registry);
@@ -68,7 +76,9 @@ contract AssetLedger is
     }
 
     function initialize(address deployer_, address whitelistRegistry_, address trustedForwarder_) external initializer {
-        if (deployer_ == address(0) || whitelistRegistry_ == address(0) || trustedForwarder_ == address(0)) revert ZeroAddress();
+        if (deployer_ == address(0) || whitelistRegistry_ == address(0) || trustedForwarder_ == address(0)) {
+            revert ZeroAddress();
+        }
 
         __ERC721_init("STOEX Asset Certificate", "STOEX-ASSET");
         __ERC721URIStorage_init();
@@ -80,7 +90,7 @@ contract AssetLedger is
 
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
         _trustedForwarderValue = trustedForwarder_;
-        version = 2;
+        version = 3;
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -114,18 +124,24 @@ contract AssetLedger is
         return _userActiveProvider[user][assetId];
     }
 
-    function providerPoolBalance(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
-        return _providerPoolBalance[assetId][providerId];
+    function circulatingSupply(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _circulating[assetId][providerId];
     }
 
-    function totalSupply(bytes32 assetId) external view override returns (uint256) {
-        return _totalSupply[assetId];
+    function totalCirculating(bytes32 assetId) external view override returns (uint256) {
+        return _totalCirculating[assetId];
     }
 
-    function circulatingSupply(bytes32 assetId) external view override returns (uint256) {
-        uint256 supply = _totalSupply[assetId];
-        uint256 pool = _totalPoolBalance[assetId];
-        return supply > pool ? supply - pool : 0;
+    function lifetimeIssued(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _lifetimeIssued[assetId][providerId];
+    }
+
+    function lifetimeSoldBack(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _lifetimeSoldBack[assetId][providerId];
+    }
+
+    function lifetimeRedeemed(bytes32 assetId, bytes32 providerId) external view override returns (uint256) {
+        return _lifetimeRedeemed[assetId][providerId];
     }
 
     function tokenIdByBeneficiary(address beneficiary, bytes32 assetId) external view override returns (uint256) {
@@ -136,7 +152,13 @@ contract AssetLedger is
         return _tokenAssetId[tokenId];
     }
 
-    function mintCertificate(bytes32 assetId, address user) external onlyRole(StoexRoles.AP_ROLE) whenNotPaused nonReentrant {
+    /// @notice Admin may mint a certificate without a buy (back-office).
+    function mintCertificate(bytes32 assetId, address user)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenNotPaused
+        nonReentrant
+    {
         _mintCertificate(assetId, user);
     }
 
@@ -163,11 +185,12 @@ contract AssetLedger is
         emit CertificateMinted(assetId, user, tokenId);
     }
 
-    function mintToPool(
+    /// @notice Credits user holding on buy; increases circulating + lifetime issued.
+    function creditUserBuy(
         bytes32 assetId,
         bytes32 providerId,
+        address user,
         uint256 amountUg,
-        StoexTypes.MintLotMeta calldata lot,
         uint256 requestId
     )
         external
@@ -177,44 +200,45 @@ contract AssetLedger is
         nonReentrant
         returns (uint256 lotId)
     {
+        if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
         if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
+        if (_tokenIdByBeneficiary[user][assetId] == 0) revert NoCertificate();
         if (amountUg == 0) revert ZeroAmount();
-        if (lot.assetId != bytes32(0) && lot.assetId != assetId) revert AssetMismatch();
-        if (lot.providerId != bytes32(0) && lot.providerId != providerId) revert ProviderMismatch();
+
+        bytes32 active = _userActiveProvider[user][assetId];
+        if (active != bytes32(0) && active != providerId) revert ProviderBindingConflict();
+        if (active == bytes32(0)) {
+            _userActiveProvider[user][assetId] = providerId;
+        }
 
         lotId = ++_nextLotId;
-        StoexTypes.MintLotMeta memory m = lot;
+        StoexTypes.MintLotMeta memory m;
         m.assetId = assetId;
         m.providerId = providerId;
         m.amountUg = amountUg;
         _mintLots[lotId] = m;
-        _poolLotIds[assetId][providerId].push(lotId);
+        _userLotIds[user][assetId].push(lotId);
 
-        _totalSupply[assetId] += amountUg;
-        _providerPoolBalance[assetId][providerId] += amountUg;
-        _totalPoolBalance[assetId] += amountUg;
+        _userHolding[user][assetId][providerId] += amountUg;
+        _circulating[assetId][providerId] += amountUg;
+        _totalCirculating[assetId] += amountUg;
+        _lifetimeIssued[assetId][providerId] += amountUg;
 
-        emit PoolInventoryMinted(assetId, providerId, amountUg, lotId, requestId);
+        _txHistory[user].push(
+            StoexTypes.TxRecord({
+                assetId: assetId,
+                providerId: providerId,
+                txType: StoexTypes.TxType.Buy,
+                amountUg: amountUg,
+                timestamp: block.timestamp,
+                requestId: requestId
+            })
+        );
+
+        emit SupplyIncreased(assetId, providerId, amountUg, user, lotId);
     }
 
-    function burnFromPool(bytes32 assetId, bytes32 providerId, uint256 amountUg, uint256 requestId)
-        external
-        override
-        onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
-        whenNotPaused
-        nonReentrant
-    {
-        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
-        if (amountUg == 0) revert ZeroAmount();
-        if (_providerPoolBalance[assetId][providerId] < amountUg) revert InsufficientPoolInventory();
-
-        _totalSupply[assetId] -= amountUg;
-        _providerPoolBalance[assetId][providerId] -= amountUg;
-        _totalPoolBalance[assetId] -= amountUg;
-
-        emit PoolInventoryBurned(assetId, providerId, amountUg, requestId);
-    }
-
+    /// @notice Debits user on sell/redeem; decreases circulating; updates lifetime sold-back or redeemed.
     function decreaseSupply(
         bytes32 assetId,
         bytes32 providerId,
@@ -226,15 +250,19 @@ contract AssetLedger is
         if (!whitelistRegistry.isEligible(user)) revert NotEligible();
         if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
         if (amountUg == 0) revert ZeroAmount();
+        if (txType != StoexTypes.TxType.Sell && txType != StoexTypes.TxType.Redeem) revert InvalidTxType();
         _requireActiveProvider(user, assetId, providerId);
         if (_userHolding[user][assetId][providerId] < amountUg) revert InsufficientBalance();
+        if (_circulating[assetId][providerId] < amountUg) revert InsufficientCirculating();
 
         _userHolding[user][assetId][providerId] -= amountUg;
+        _circulating[assetId][providerId] -= amountUg;
+        _totalCirculating[assetId] -= amountUg;
+
         if (txType == StoexTypes.TxType.Sell) {
-            _providerPoolBalance[assetId][providerId] += amountUg;
-            _totalPoolBalance[assetId] += amountUg;
+            _lifetimeSoldBack[assetId][providerId] += amountUg;
         } else {
-            _totalSupply[assetId] -= amountUg;
+            _lifetimeRedeemed[assetId][providerId] += amountUg;
         }
 
         if (_userHolding[user][assetId][providerId] == 0) {
@@ -256,61 +284,6 @@ contract AssetLedger is
         emit SupplyDecreased(assetId, providerId, amountUg, user, txType);
     }
 
-    function transferFromAPToUser(
-        bytes32 assetId,
-        bytes32 providerId,
-        address user,
-        uint256 amountUg,
-        StoexTypes.MintLotMeta calldata lot,
-        uint256 requestId,
-        StoexTypes.TxType historyKind
-    )
-        external
-        override
-        onlyRole(StoexRoles.TRADE_MANAGER_ROLE)
-        whenNotPaused
-        nonReentrant
-        returns (uint256 lotId)
-    {
-        if (!_canReceiveBuyOrCertificate(user)) revert NotEligible();
-        if (assetId == bytes32(0) || providerId == bytes32(0)) revert ZeroIds();
-        if (_tokenIdByBeneficiary[user][assetId] == 0) revert NoCertificate();
-        if (amountUg == 0) revert ZeroAmount();
-        if (_providerPoolBalance[assetId][providerId] < amountUg) revert InsufficientPoolInventory();
-
-        bytes32 active = _userActiveProvider[user][assetId];
-        if (active != bytes32(0) && active != providerId) revert ProviderBindingConflict();
-
-        _providerPoolBalance[assetId][providerId] -= amountUg;
-        _totalPoolBalance[assetId] -= amountUg;
-        if (active == bytes32(0)) {
-            _userActiveProvider[user][assetId] = providerId;
-        }
-
-        lotId = ++_nextLotId;
-        StoexTypes.MintLotMeta memory m = lot;
-        m.assetId = assetId;
-        m.providerId = providerId;
-        m.amountUg = amountUg;
-        _mintLots[lotId] = m;
-        _userLotIds[user][assetId].push(lotId);
-
-        _userHolding[user][assetId][providerId] += amountUg;
-
-        _txHistory[user].push(
-            StoexTypes.TxRecord({
-                assetId: assetId,
-                providerId: providerId,
-                txType: historyKind,
-                amountUg: amountUg,
-                timestamp: block.timestamp,
-                requestId: requestId
-            })
-        );
-
-        emit SupplyIncreased(assetId, providerId, amountUg, user, lotId);
-    }
-
     function updateMetadata(uint256 tokenId, string calldata newUri) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _requireOwned(tokenId);
         _setTokenURI(tokenId, newUri);
@@ -323,7 +296,9 @@ contract AssetLedger is
         whenNotPaused
         nonReentrant
     {
-        if (!whitelistRegistry.isEligible(fromBeneficiary) || !whitelistRegistry.isEligible(toCustody)) revert NotEligible();
+        if (!whitelistRegistry.isEligible(fromBeneficiary) || !whitelistRegistry.isEligible(toCustody)) {
+            revert NotEligible();
+        }
         uint256 tokenId = _tokenIdByBeneficiary[fromBeneficiary][assetId];
         if (tokenId == 0) revert NoCertificate();
         if (beneficiaryOfToken[tokenId] != fromBeneficiary) revert InvalidBeneficiary();
@@ -342,10 +317,6 @@ contract AssetLedger is
 
     function getUserLotIds(address beneficiary, bytes32 assetId) external view override returns (uint256[] memory) {
         return _userLotIds[beneficiary][assetId];
-    }
-
-    function getPoolLotIds(bytes32 assetId, bytes32 providerId) external view override returns (uint256[] memory) {
-        return _poolLotIds[assetId][providerId];
     }
 
     function getTxHistory(address user, uint256 start, uint256 end) external view returns (StoexTypes.TxRecord[] memory) {
@@ -421,7 +392,10 @@ contract AssetLedger is
         return ERC2771ContextUpgradeable._contextSuffixLength();
     }
 
-    uint256[40] private __gap;
+    // Legacy mappings `_totalSupply`, `_totalPoolBalance`, `_providerPoolBalance`, `_poolLotIds`
+    // are intentionally retained (unused) so UUPS storage layout stays stable.
+
+    uint256[35] private __gap;
 
     error ZeroAddress();
     error ZeroAssetId();
@@ -431,11 +405,10 @@ contract AssetLedger is
     error NoCertificate();
     error ZeroAmount();
     error InsufficientBalance();
-    error InsufficientPoolInventory();
+    error InsufficientCirculating();
+    error InvalidTxType();
     error InvalidBeneficiary();
     error Soulbound();
     error BadPagination();
     error ProviderBindingConflict();
-    error AssetMismatch();
-    error ProviderMismatch();
 }

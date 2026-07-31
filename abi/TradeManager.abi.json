@@ -45,24 +45,6 @@
   },
   {
     "type": "function",
-    "name": "approveRequestFor",
-    "inputs": [
-      {
-        "name": "approver",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "assetLedger",
     "inputs": [],
     "outputs": [
@@ -117,25 +99,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "coSignNonce",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -209,11 +172,6 @@
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "deliveryRefId",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -248,11 +206,6 @@
         "name": "amountUg",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "payoutRefId",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "outputs": [
@@ -279,49 +232,6 @@
   },
   {
     "type": "function",
-    "name": "eip712Domain",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "fields",
-        "type": "bytes1",
-        "internalType": "bytes1"
-      },
-      {
-        "name": "name",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "version",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "chainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "verifyingContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "salt",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "extensions",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "escrowVault",
     "inputs": [],
     "outputs": [
@@ -341,34 +251,11 @@
         "name": "requestId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "executeWithCoSignatures",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "signatures",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
+        "name": "settlementRefId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [],
@@ -734,141 +621,6 @@
   },
   {
     "type": "function",
-    "name": "proposeBurnFor",
-    "inputs": [
-      {
-        "name": "ap",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "referenceId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "reason_",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "proposeMintFor",
-    "inputs": [
-      {
-        "name": "ap",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "vaultReceiptId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "lot",
-        "type": "tuple",
-        "internalType": "struct StoexTypes.MintLotMeta",
-        "components": [
-          {
-            "name": "assetId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "providerId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vaultReceiptId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "batchId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "purity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "depositTimestamp",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "vpId",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lockUntilTs",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountUg",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "proxiableUUID",
     "inputs": [],
     "outputs": [
@@ -882,13 +634,8 @@
   },
   {
     "type": "function",
-    "name": "rejectRequestFor",
+    "name": "rejectRequest",
     "inputs": [
-      {
-        "name": "rejector",
-        "type": "address",
-        "internalType": "address"
-      },
       {
         "name": "requestId",
         "type": "uint256",
@@ -1095,31 +842,6 @@
   },
   {
     "type": "event",
-    "name": "CoSignConsumed",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "EIP712DomainChanged",
-    "inputs": [],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "InitialAdminSet",
     "inputs": [
       {
@@ -1150,31 +872,6 @@
     "inputs": [
       {
         "name": "account",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RequestApproved",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "role",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "approver",
         "type": "address",
         "indexed": false,
         "internalType": "address"
@@ -1287,12 +984,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "role",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
         "name": "rejector",
         "type": "address",
         "indexed": false,
@@ -1384,6 +1075,25 @@
   },
   {
     "type": "event",
+    "name": "SettlementRefSet",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "settlementRefId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Unpaused",
     "inputs": [
       {
@@ -1452,27 +1162,7 @@
   },
   {
     "type": "error",
-    "name": "AlreadyProgressed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "AssetNotSupported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadNonce",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadSignatures",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BadSigner",
     "inputs": []
   },
   {
@@ -1513,11 +1203,6 @@
   {
     "type": "error",
     "name": "DeployerZeroAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "DuplicateSigner",
     "inputs": []
   },
   {
@@ -1563,11 +1248,6 @@
   },
   {
     "type": "error",
-    "name": "FullyApproved",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InactiveAsset",
     "inputs": []
   },
@@ -1578,22 +1258,7 @@
   },
   {
     "type": "error",
-    "name": "InsufficientApInventory",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidInitialization",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRole",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotApprover",
     "inputs": []
   },
   {
@@ -1613,22 +1278,12 @@
   },
   {
     "type": "error",
-    "name": "NotFullyApproved",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotInitializing",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NotInitiator",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotProviderOperator",
     "inputs": []
   },
   {
@@ -1658,16 +1313,6 @@
   },
   {
     "type": "error",
-    "name": "SignatureDeadline",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StepDone",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "Timelocked",
     "inputs": []
   },
@@ -1689,6 +1334,11 @@
   },
   {
     "type": "error",
+    "name": "UnsupportedRequestType",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroAddress",
     "inputs": []
   },
@@ -1700,6 +1350,11 @@
   {
     "type": "error",
     "name": "ZeroFiatValue",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroSettlementRef",
     "inputs": []
   }
 ]

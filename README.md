@@ -29,7 +29,7 @@ forge test -vv
 | **TradeManagerLib** (linked library) | `0xace904fd78507458f3d55d8b0efdd721747445a6` |
 | **Tresori relayer** (`RELAYER_SMART_CONTRACT`) | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
-**On-chain admin:** deployer `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` (used for initial wiring). To hand off to ops admin `INITIAL_ADMIN` in `.env`, call `transferAdmin` on each proxy from the deployer key.
+**On-chain admin:** `0xb4451002742d6589781C5AfA6A213c8F6c1db087` (ops). Deployer `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` no longer holds `DEFAULT_ADMIN_ROLE`.
 
 **Frontend integration:** see [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) (onboarding, admin roles, mint, buy, sell, reject).
 

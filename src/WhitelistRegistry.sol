@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
 /// - `DEFAULT_ADMIN_ROLE`: admin-register users, KYC, wallet risk, suspend/blacklist; grant `USER_ROLE` for wallet-change requests.
 /// - Self-service: gasless `registerUserFor` and `verifyKYCFor` (relayer passes explicit wallet); admin may `adminRegisterUser` for back-office onboarding.
 /// - `USER_ROLE`: investor may `requestWalletChangeFor` for their own wallet via relayer.
-/// - `AT_ROLE`: co-approve wallet migration with admin; `unsuspendWallet` override.
+/// - Wallet migration: admin-only approval. `unsuspendWallet` is admin-only.
 /// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -38,7 +38,7 @@ contract WhitelistRegistry is
         address oldWallet;
         address newWallet;
         bool adminOk;
-        bool trusteeOk;
+        bool trusteeOk; // legacy field retained for storage layout; unused in V1
         bool processed;
     }
     mapping(uint256 => WalletChangeRequest) public walletChangeRequests;
@@ -171,29 +171,26 @@ contract WhitelistRegistry is
         emit WalletChangeRequested(id, oldWallet, newWallet);
     }
 
-    /// @notice Gasless dual approval. `actor` must hold `AT_ROLE` or `DEFAULT_ADMIN_ROLE`.
+    /// @notice Gasless admin approval of a wallet-change request.
     function approveWalletChangeFor(address actor, uint256 changeRequestId) external onlyTrustedForwarder {
         _approveWalletChange(actor, changeRequestId);
     }
 
-    /// @notice Asset Trustee and Default Admin must both call this (in any order) before migration runs.
-    function approveWalletChange(uint256 changeRequestId) external {
+    /// @notice Admin approves wallet migration (single approval).
+    function approveWalletChange(uint256 changeRequestId) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _approveWalletChange(msg.sender, changeRequestId);
     }
 
     function _approveWalletChange(address actor, uint256 changeRequestId) private {
+        if (!hasRole(DEFAULT_ADMIN_ROLE, actor)) revert NotAdmin();
         WalletChangeRequest storage w = walletChangeRequests[changeRequestId];
         if (w.oldWallet == address(0)) revert InvalidRequest();
         if (w.processed) revert AlreadyProcessed();
 
-        if (hasRole(StoexRoles.AT_ROLE, actor)) w.trusteeOk = true;
-        if (hasRole(DEFAULT_ADMIN_ROLE, actor)) w.adminOk = true;
-
-        if (w.adminOk && w.trusteeOk) {
-            _migrateWallet(w.oldWallet, w.newWallet);
-            w.processed = true;
-            emit WalletChangeApproved(changeRequestId, w.newWallet);
-        }
+        w.adminOk = true;
+        _migrateWallet(w.oldWallet, w.newWallet);
+        w.processed = true;
+        emit WalletChangeApproved(changeRequestId, w.newWallet);
     }
 
     function _migrateWallet(address oldWallet, address newWallet) private {
@@ -243,7 +240,7 @@ contract WhitelistRegistry is
         emit UserStatusChanged(wallet, old_, p.userStatus);
     }
 
-    function unsuspendWallet(address wallet, bytes32 caseRef) external onlyRole(StoexRoles.AT_ROLE) {
+    function unsuspendWallet(address wallet, bytes32 caseRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.WalletStatus old_ = p.walletStatus;
@@ -292,4 +289,5 @@ contract WhitelistRegistry is
     error InvalidRequest();
     error AlreadyProcessed();
     error KycNotPending();
+    error NotAdmin();
 }

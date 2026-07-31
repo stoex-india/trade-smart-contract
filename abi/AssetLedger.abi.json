@@ -101,7 +101,7 @@
   },
   {
     "type": "function",
-    "name": "burnFromPool",
+    "name": "circulatingSupply",
     "inputs": [
       {
         "name": "assetId",
@@ -110,29 +110,6 @@
       },
       {
         "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "circulatingSupply",
-    "inputs": [
-      {
-        "name": "assetId",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -145,6 +122,45 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "creditUserBuy",
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountUg",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lotId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -278,30 +294,6 @@
             "internalType": "uint256"
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPoolLotIds",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -520,6 +512,78 @@
   },
   {
     "type": "function",
+    "name": "lifetimeIssued",
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lifetimeRedeemed",
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lifetimeSoldBack",
+    "inputs": [
+      {
+        "name": "assetId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "providerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mintCertificate",
     "inputs": [
       {
@@ -552,92 +616,6 @@
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "mintToPool",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lot",
-        "type": "tuple",
-        "internalType": "struct StoexTypes.MintLotMeta",
-        "components": [
-          {
-            "name": "assetId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "providerId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vaultReceiptId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "batchId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "purity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "depositTimestamp",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "vpId",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lockUntilTs",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountUg",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "lotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -724,30 +702,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "providerPoolBalance",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1018,7 +972,7 @@
   },
   {
     "type": "function",
-    "name": "totalSupply",
+    "name": "totalCirculating",
     "inputs": [
       {
         "name": "assetId",
@@ -1069,102 +1023,6 @@
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "transferFromAPToUser",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lot",
-        "type": "tuple",
-        "internalType": "struct StoexTypes.MintLotMeta",
-        "components": [
-          {
-            "name": "assetId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "providerId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vaultReceiptId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "batchId",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "purity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "depositTimestamp",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "vpId",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lockUntilTs",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountUg",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "historyKind",
-        "type": "uint8",
-        "internalType": "enum StoexTypes.TxType"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "lotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -1532,74 +1390,6 @@
   },
   {
     "type": "event",
-    "name": "PoolInventoryBurned",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PoolInventoryMinted",
-    "inputs": [
-      {
-        "name": "assetId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "providerId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amountUg",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lotId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RoleAdminChanged",
     "inputs": [
       {
@@ -1860,11 +1650,6 @@
   },
   {
     "type": "error",
-    "name": "AssetMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BadPagination",
     "inputs": []
   },
@@ -2014,7 +1799,7 @@
   },
   {
     "type": "error",
-    "name": "InsufficientPoolInventory",
+    "name": "InsufficientCirculating",
     "inputs": []
   },
   {
@@ -2025,6 +1810,11 @@
   {
     "type": "error",
     "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidTxType",
     "inputs": []
   },
   {
@@ -2050,11 +1840,6 @@
   {
     "type": "error",
     "name": "ProviderBindingConflict",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ProviderMismatch",
     "inputs": []
   },
   {

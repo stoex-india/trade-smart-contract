@@ -33,8 +33,8 @@ contract ConfigureDeployment is Script {
         address timelock = vm.envAddress("TIMELOCK_CONTROLLER");
         address trade = vm.envAddress("TRADE_MANAGER");
 
-        address apOperator = vm.envOr("ROLE_AP", admin);
-        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", apOperator);
+        address apOperator = vm.envOr("ROLE_AP", address(0));
+        address apPayout = vm.envOr("ASSET_PROVIDER_PAYOUT", admin);
         address rSink = vm.envOr("REDEEM_SINK", address(0x000000000000000000000000000000000000dEaD));
         bytes32 providerId = keccak256(bytes(vm.envOr("DEFAULT_PROVIDER_LABEL", string("AP1"))));
 
@@ -44,8 +44,10 @@ contract ConfigureDeployment is Script {
         AssetRegistry(assetReg).registerAsset(StoexIds.SILVER, "AG", "Silver", 6);
 
         AssetProviderRegistry pr = AssetProviderRegistry(providerReg);
-        pr.registerProvider(providerId, vm.envOr("DEFAULT_PROVIDER_NAME", string("Default AP")));
-        pr.addProviderOperator(providerId, apOperator);
+        pr.registerProvider(providerId, vm.envOr("DEFAULT_PROVIDER_NAME", string("MMTC")));
+        if (apOperator != address(0)) {
+            pr.addProviderOperator(providerId, apOperator);
+        }
         pr.setProviderAsset(providerId, StoexIds.GOLD, true);
         pr.setProviderAsset(providerId, StoexIds.SILVER, true);
         pr.setAssetRouting(providerId, StoexIds.GOLD, apPayout, rSink);
