@@ -2,14 +2,15 @@
 pragma solidity ^0.8.24;
 
 /// @title TradeManager
-/// @notice Central orchestrator for multi-asset, multi-provider trade requests.
+/// @notice Central orchestrator for multi-asset, multi-provider trade requests (V1).
+/// @dev Buy auto-executes. Sell/Redeem escrow then admin `executeRequest(requestId, settlementRef)`.
+///      No mint/burn. No multi-party approvals — only Admin and User roles on the trade path.
 import {StoexRelayerGate} from "./base/StoexRelayerGate.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 
 import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
@@ -27,7 +28,6 @@ contract TradeManager is
     StoexDeployerAdminUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
-    EIP712Upgradeable,
     UUPSUpgradeable,
     StoexRelayerGate
 {
@@ -48,12 +48,10 @@ contract TradeManager is
     TradeManagerLib.DayCaps private _dayCaps;
 
     mapping(uint256 => StoexTypes.TradeRequest) private _requests;
+    // Legacy co-sign / step-approval slots retained for UUPS layout.
     mapping(uint256 => mapping(uint256 => bool)) private _stepApproved;
-    mapping(uint256 => uint256) public coSignNonce;
+    mapping(uint256 => uint256) private _coSignNonceLegacy;
     mapping(address => uint256) private _nonKycFiatPurchased;
-
-    bytes32 private constant CO_SIGN_TYPEHASH =
-        keccak256("CoSignBatch(uint256 requestId,uint256 nonce,uint256 deadline)");
 
     event RequestCreated(
         uint256 indexed requestId,
@@ -64,12 +62,11 @@ contract TradeManager is
         uint256 amountUg,
         uint256 fiatValue
     );
-    event RequestApproved(uint256 indexed requestId, bytes32 indexed role, address approver);
-    event RequestRejected(uint256 indexed requestId, bytes32 indexed role, address rejector, string reason);
+    event RequestRejected(uint256 indexed requestId, address rejector, string reason);
     event RequestExecuted(uint256 indexed requestId, StoexTypes.RequestType requestType);
     event RequestCancelled(uint256 indexed requestId);
     event RequestExpired(uint256 indexed requestId);
-    event CoSignConsumed(uint256 indexed requestId, uint256 nonce);
+    event SettlementRefSet(uint256 indexed requestId, bytes32 settlementRefId);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -90,13 +87,13 @@ contract TradeManager is
         if (
             deployer_ == address(0) || governance_ == address(0) || whitelistRegistry_ == address(0)
                 || assetLedger_ == address(0) || escrowVault_ == address(0) || timelockController_ == address(0)
-                || assetRegistry_ == address(0) || assetProviderRegistry_ == address(0) || trustedForwarder_ == address(0)
+                || assetRegistry_ == address(0) || assetProviderRegistry_ == address(0)
+                || trustedForwarder_ == address(0)
         ) revert ZeroAddress();
 
         __AccessControl_init();
         __Pausable_init();
         __ReentrancyGuard_init();
-        __EIP712_init("StoexTrade", "2");
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
 
@@ -109,7 +106,7 @@ contract TradeManager is
         assetProviderRegistry = IAssetProviderRegistry(assetProviderRegistry_);
         _trustedForwarderValue = trustedForwarder_;
 
-        version = 2;
+        version = 3;
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -135,6 +132,7 @@ contract TradeManager is
         _unpause();
     }
 
+    /// @notice Instant buy. `payment_ref` should be a client-side SHA-256 hash of the off-chain payment ref.
     function createBuyRequestFor(
         address user,
         bytes32 assetId,
@@ -161,7 +159,6 @@ contract TradeManager is
         _checkBuyAmount(assetId, weightUg);
         if (fiat_value == 0) revert ZeroFiatValue();
         _requireBuyProviderBinding(user, assetId, providerId);
-        if (assetLedger.providerPoolBalance(assetId, providerId) < weightUg) revert InsufficientApInventory();
 
         if (whitelistRegistry.isEligible(user)) {
             _checkBuyCap(assetId, weightUg);
@@ -175,24 +172,22 @@ contract TradeManager is
         _finalizeBuy(requestId, user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
     }
 
-    function createSellRequestFor(
-        address user,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 payoutRefId
-    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
+    /// @notice Create sell — settlement ref is supplied later by admin at execute.
+    function createSellRequestFor(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
         _requireUserRole(user);
-        return _createSellRequest(user, assetId, providerId, amountUg, payoutRefId);
+        return _createSellRequest(user, assetId, providerId, amountUg);
     }
 
-    function _createSellRequest(
-        address user,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 payoutRefId
-    ) private returns (uint256 requestId) {
+    function _createSellRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        private
+        returns (uint256 requestId)
+    {
         _validateAssetProvider(assetId, providerId);
         _requireEligible(user);
         _requireNotTimelocked(user, assetId);
@@ -211,7 +206,7 @@ contract TradeManager is
             user,
             user,
             amountUg,
-            payoutRefId,
+            bytes32(0),
             bytes32(0),
             "",
             exp,
@@ -222,24 +217,22 @@ contract TradeManager is
         emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Sell, user, amountUg, 0);
     }
 
-    function createRedeemRequestFor(
-        address user,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 deliveryRefId
-    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
+    /// @notice Create redeem — delivery/settlement ref is supplied later by admin at execute.
+    function createRedeemRequestFor(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        external
+        onlyTrustedForwarder
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
         _requireUserRole(user);
-        return _createRedeemRequest(user, assetId, providerId, amountUg, deliveryRefId);
+        return _createRedeemRequest(user, assetId, providerId, amountUg);
     }
 
-    function _createRedeemRequest(
-        address user,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 deliveryRefId
-    ) private returns (uint256 requestId) {
+    function _createRedeemRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        private
+        returns (uint256 requestId)
+    {
         _validateAssetProvider(assetId, providerId);
         _requireEligible(user);
         _requireNotTimelocked(user, assetId);
@@ -258,7 +251,7 @@ contract TradeManager is
             user,
             user,
             amountUg,
-            deliveryRefId,
+            bytes32(0),
             bytes32(0),
             "",
             exp,
@@ -269,161 +262,21 @@ contract TradeManager is
         emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
-    function proposeMintFor(
-        address ap,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 vaultReceiptId,
-        StoexTypes.MintLotMeta calldata lot
-    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
-        if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
-        if (!assetProviderRegistry.isOperator(providerId, ap)) revert NotProviderOperator();
-        return _proposeMint(ap, assetId, providerId, amountUg, vaultReceiptId, lot);
-    }
-
-    function _proposeMint(
-        address ap,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 vaultReceiptId,
-        StoexTypes.MintLotMeta calldata lot
-    ) private returns (uint256 requestId) {
-        _validateAssetProvider(assetId, providerId);
-        _checkAmountUg(amountUg);
-
-        requestId = ++nextRequestId;
-        uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        StoexTypes.MintLotMeta memory m = lot;
-        m.assetId = assetId;
-        m.providerId = providerId;
-        m.amountUg = amountUg;
-        m.vaultReceiptId = vaultReceiptId;
-
-        TradeManagerLib.initPendingRequest(
-            _requests[requestId],
-            assetId,
-            providerId,
-            StoexTypes.RequestType.Mint,
-            ap,
-            address(0),
-            amountUg,
-            bytes32(0),
-            vaultReceiptId,
-            "",
-            exp,
-            m,
-            false
-        );
-
-        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Mint, ap, amountUg, 0);
-    }
-
-    function proposeBurnFor(
-        address ap,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 referenceId,
-        string calldata reason_
-    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
-        if (!hasRole(StoexRoles.AP_ROLE, ap)) revert NotApprover();
-        if (!assetProviderRegistry.isOperator(providerId, ap)) revert NotProviderOperator();
-        return _proposeBurn(ap, assetId, providerId, amountUg, referenceId, reason_);
-    }
-
-    function _proposeBurn(
-        address ap,
-        bytes32 assetId,
-        bytes32 providerId,
-        uint256 amountUg,
-        bytes32 referenceId,
-        string calldata reason_
-    ) private returns (uint256 requestId) {
-        _validateAssetProvider(assetId, providerId);
-        _checkAmountUg(amountUg);
-
-        requestId = ++nextRequestId;
-        uint256 exp = block.timestamp + governance.requestExpiryDuration();
-        TradeManagerLib.initPendingRequest(
-            _requests[requestId],
-            assetId,
-            providerId,
-            StoexTypes.RequestType.Burn,
-            ap,
-            address(0),
-            amountUg,
-            referenceId,
-            bytes32(0),
-            reason_,
-            exp,
-            TradeManagerLib.emptyLot(),
-            false
-        );
-
-        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Burn, ap, amountUg, 0);
-    }
-
-    function approveRequestFor(address approver, uint256 requestId) external onlyTrustedForwarder whenNotPaused nonReentrant {
-        _approveRequest(approver, requestId);
-    }
-
-    function _approveRequest(address approver, uint256 requestId) private {
-        StoexTypes.TradeRequest storage r = _requests[requestId];
-        _requirePending(r);
-        if (block.timestamp > r.expiresAt) revert Expired();
-
-        bytes32[] memory pol = governance.getApprovalPolicy(r.requestType);
-        if (r.approvalsDone >= pol.length) revert FullyApproved();
-
-        bytes32 requiredRole = pol[r.approvalsDone];
-        if (!hasRole(requiredRole, approver)) revert NotApprover();
-        if (requiredRole == StoexRoles.AP_ROLE && !assetProviderRegistry.isOperator(r.providerId, approver)) {
-            revert NotProviderOperator();
-        }
-
-        uint256 step = r.approvalsDone;
-        if (_stepApproved[requestId][step]) revert StepDone();
-
-        _stepApproved[requestId][step] = true;
-        bytes32 approvedRole = requiredRole;
-        r.approvalsDone += 1;
-
-        if (r.approvalsDone == pol.length) {
-            r.status = StoexTypes.RequestStatus.ATApproved;
-        } else {
-            r.status = _roleMilestone(approvedRole);
-        }
-
-        emit RequestApproved(requestId, approvedRole, approver);
-    }
-
-    function rejectRequestFor(address rejector, uint256 requestId, string calldata reason_)
+    /// @notice Admin rejects a pending sell/redeem (unlocks escrow).
+    function rejectRequest(uint256 requestId, string calldata reason_)
         external
-        onlyTrustedForwarder
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
         nonReentrant
     {
-        _rejectRequest(rejector, requestId, reason_);
-    }
-
-    function _rejectRequest(address rejector, uint256 requestId, string calldata reason_) private {
         StoexTypes.TradeRequest storage r = _requests[requestId];
         _requirePending(r);
-        if (
-            !hasRole(StoexRoles.AP_ROLE, rejector) && !hasRole(StoexRoles.VP_ROLE, rejector)
-                && !hasRole(StoexRoles.AT_ROLE, rejector) && !hasRole(StoexRoles.PAP_ROLE, rejector)
-        ) {
-            revert NotApprover();
-        }
-
         if (r.escrowLocked) {
             escrowVault.unlockTokens(requestId);
         }
         r.escrowLocked = false;
         r.status = StoexTypes.RequestStatus.Rejected;
-        emit RequestRejected(requestId, bytes32(0), rejector, reason_);
+        emit RequestRejected(requestId, msg.sender, reason_);
     }
 
     function cancelRequestFor(address initiator, uint256 requestId)
@@ -463,65 +316,27 @@ contract TradeManager is
         emit RequestExpired(requestId);
     }
 
-    function executeRequest(uint256 requestId) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused nonReentrant {
-        StoexTypes.TradeRequest storage r = _requests[requestId];
-        if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
-        if (r.status != StoexTypes.RequestStatus.ATApproved) revert NotFullyApproved();
-        TradeManagerLib.executeTrade(
-            r,
-            requestId,
-            _dayCaps,
-            whitelistRegistry,
-            governance,
-            assetLedger,
-            assetProviderRegistry,
-            escrowVault,
-            timelockController
-        );
-        r.status = StoexTypes.RequestStatus.Executed;
-        emit RequestExecuted(requestId, r.requestType);
-    }
-
-    function executeWithCoSignatures(uint256 requestId, uint256 nonce, uint256 deadline, bytes[] calldata signatures)
+    /// @notice Admin executes sell/redeem. `settlementRefId` is a client-side SHA-256 hash (payout / delivery).
+    function executeRequest(uint256 requestId, bytes32 settlementRefId)
         external
+        onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
         nonReentrant
     {
-        if (block.timestamp > deadline) revert SignatureDeadline();
         StoexTypes.TradeRequest storage r = _requests[requestId];
         if (r.requestType == StoexTypes.RequestType.Buy) revert BuyUsesAutoExecution();
-        if (block.timestamp > r.expiresAt) revert Expired();
-        if (r.approvalsDone != 0) revert AlreadyProgressed();
-        if (r.status != StoexTypes.RequestStatus.Proposed) revert BadStatus();
-
-        bytes32[] memory pol = governance.getApprovalPolicy(r.requestType);
-        if (signatures.length != pol.length) revert BadSignatures();
-
-        if (nonce != coSignNonce[requestId]) revert BadNonce();
-
-        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(CO_SIGN_TYPEHASH, requestId, nonce, deadline)));
-
-        TradeManagerLib.verifyCoSigners(digest, signatures, pol, r.providerId, this, assetProviderRegistry);
-
-        coSignNonce[requestId] = nonce + 1;
-        emit CoSignConsumed(requestId, nonce);
-
-        for (uint256 i = 0; i < pol.length; i++) {
-            _stepApproved[requestId][i] = true;
+        if (r.requestType != StoexTypes.RequestType.Sell && r.requestType != StoexTypes.RequestType.Redeem) {
+            revert UnsupportedRequestType();
         }
-        r.approvalsDone = pol.length;
-        r.status = StoexTypes.RequestStatus.ATApproved;
+        if (r.status != StoexTypes.RequestStatus.Proposed) revert BadStatus();
+        if (block.timestamp > r.expiresAt) revert Expired();
+        if (settlementRefId == bytes32(0)) revert ZeroSettlementRef();
+
+        r.paymentRefId = settlementRefId;
+        emit SettlementRefSet(requestId, settlementRefId);
 
         TradeManagerLib.executeTrade(
-            r,
-            requestId,
-            _dayCaps,
-            whitelistRegistry,
-            governance,
-            assetLedger,
-            assetProviderRegistry,
-            escrowVault,
-            timelockController
+            r, requestId, _dayCaps, whitelistRegistry, governance, assetLedger, assetProviderRegistry, escrowVault
         );
         r.status = StoexTypes.RequestStatus.Executed;
         emit RequestExecuted(requestId, r.requestType);
@@ -628,14 +443,6 @@ contract TradeManager is
         ) revert BadStatus();
     }
 
-    function _roleMilestone(bytes32 role) private pure returns (StoexTypes.RequestStatus) {
-        if (role == StoexRoles.AP_ROLE) return StoexTypes.RequestStatus.APApproved;
-        if (role == StoexRoles.VP_ROLE) return StoexTypes.RequestStatus.VPApproved;
-        if (role == StoexRoles.PAP_ROLE) return StoexTypes.RequestStatus.PAPApproved;
-        if (role == StoexRoles.AT_ROLE) return StoexTypes.RequestStatus.ATApproved;
-        revert InvalidRole();
-    }
-
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     uint256[34] private __gap;
@@ -651,28 +458,17 @@ contract TradeManager is
     error CapSell();
     error BelowMinRedeem();
     error Timelocked();
-    error NotApprover();
-    error NotProviderOperator();
-    error StepDone();
-    error FullyApproved();
     error Expired();
     error NotExpired();
     error NotInitiator();
     error BadStatus();
-    error NotFullyApproved();
-    error AlreadyProgressed();
-    error BadSignatures();
-    error BadNonce();
-    error BadSigner();
-    error DuplicateSigner();
-    error InvalidRole();
-    error SignatureDeadline();
     error ZeroFiatValue();
-    error InsufficientApInventory();
     error BelowMinBuy();
     error BuyUsesAutoExecution();
     error InactiveAsset();
     error InactiveProvider();
     error AssetNotSupported();
     error ProviderBindingConflict();
+    error UnsupportedRequestType();
+    error ZeroSettlementRef();
 }

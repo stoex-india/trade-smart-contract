@@ -45,24 +45,6 @@
   },
   {
     "type": "function",
-    "name": "applyMintLotTimelock",
-    "inputs": [
-      {
-        "name": "lotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "untilTs",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "deployer",
     "inputs": [],
     "outputs": [
@@ -657,7 +639,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "trustee",
+        "name": "admin",
         "type": "address",
         "indexed": false,
         "internalType": "address"
@@ -795,11 +777,6 @@
   {
     "type": "error",
     "name": "NotInitializing",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotTradeManager",
     "inputs": []
   },
   {

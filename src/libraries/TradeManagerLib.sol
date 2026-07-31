@@ -2,9 +2,6 @@
 pragma solidity ^0.8.24;
 
 import {StoexTypes} from "./StoexTypes.sol";
-import {StoexRoles} from "./StoexRoles.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IWhitelistRegistry} from "../interfaces/IWhitelistRegistry.sol";
 import {IGovernanceConfig} from "../interfaces/IGovernanceConfig.sol";
 import {IAssetLedger} from "../interfaces/IAssetLedger.sol";
@@ -63,8 +60,7 @@ library TradeManagerLib {
         IGovernanceConfig governance,
         IAssetLedger assetLedger,
         IAssetProviderRegistry assetProviderRegistry,
-        IEscrowVault escrowVault,
-        ITimelockController timelockController
+        IEscrowVault escrowVault
     ) external {
         if (r.requestType == StoexTypes.RequestType.Sell) {
             if (!whitelistRegistry.isEligible(r.targetUser)) revert NotEligible();
@@ -73,22 +69,19 @@ library TradeManagerLib {
             address payout = assetProviderRegistry.getSellPayout(r.providerId, r.assetId);
             escrowVault.releaseEscrow(requestId, payout);
             r.escrowLocked = false;
-            assetLedger.decreaseSupply(r.assetId, r.providerId, r.targetUser, r.amountUg, StoexTypes.TxType.Sell, requestId);
+            assetLedger.decreaseSupply(
+                r.assetId, r.providerId, r.targetUser, r.amountUg, StoexTypes.TxType.Sell, requestId
+            );
         } else if (r.requestType == StoexTypes.RequestType.Redeem) {
             if (!whitelistRegistry.isEligible(r.targetUser)) revert NotEligible();
             address sink = assetProviderRegistry.getRedeemSink(r.providerId, r.assetId);
             escrowVault.releaseEscrow(requestId, sink);
             r.escrowLocked = false;
-            assetLedger.decreaseSupply(r.assetId, r.providerId, r.targetUser, r.amountUg, StoexTypes.TxType.Redeem, requestId);
-        } else if (r.requestType == StoexTypes.RequestType.Mint) {
-            uint256 lotId = assetLedger.mintToPool(r.assetId, r.providerId, r.amountUg, r.mintLot, requestId);
-            uint256 dur = governance.defaultTimelockDuration();
-            if (dur > 0) {
-                timelockController.applyMintLotTimelock(lotId, block.timestamp + dur);
-            }
-            lotId;
-        } else if (r.requestType == StoexTypes.RequestType.Burn) {
-            assetLedger.burnFromPool(r.assetId, r.providerId, r.amountUg, requestId);
+            assetLedger.decreaseSupply(
+                r.assetId, r.providerId, r.targetUser, r.amountUg, StoexTypes.TxType.Redeem, requestId
+            );
+        } else {
+            revert UnsupportedRequestType();
         }
     }
 
@@ -111,7 +104,7 @@ library TradeManagerLib {
         if (assetLedger.tokenIdByBeneficiary(user, assetId) == 0) {
             assetLedger.mintCertificateForTrade(assetId, user);
         }
-        assetLedger.transferFromAPToUser(assetId, providerId, user, weightUg, emptyLot(), requestId, StoexTypes.TxType.Buy);
+        assetLedger.creditUserBuy(assetId, providerId, user, weightUg, requestId);
 
         if (whitelistRegistry.isEligible(user)) {
             _accrueBuy(caps, assetId, weightUg);
@@ -137,26 +130,6 @@ library TradeManagerLib {
         r.escrowLocked = false;
         r.fiatValue = fiat_value;
         r.txDetailsHash = txDetailsHash_;
-    }
-
-    function verifyCoSigners(
-        bytes32 digest,
-        bytes[] calldata signatures,
-        bytes32[] memory pol,
-        bytes32 providerId,
-        IAccessControl roles,
-        IAssetProviderRegistry assetProviderRegistry
-    ) external view {
-        address last = address(0);
-        for (uint256 i = 0; i < pol.length; i++) {
-            address signer = ECDSA.recover(digest, signatures[i]);
-            if (signer == last) revert DuplicateSigner();
-            if (!roles.hasRole(pol[i], signer)) revert BadSigner();
-            if (pol[i] == StoexRoles.AP_ROLE && !assetProviderRegistry.isOperator(providerId, signer)) {
-                revert BadSigner();
-            }
-            last = signer;
-        }
     }
 
     function requireNotTimelocked(
@@ -207,6 +180,5 @@ library TradeManagerLib {
     error NotEligible();
     error CapSell();
     error Timelocked();
-    error BadSigner();
-    error DuplicateSigner();
+    error UnsupportedRequestType();
 }
