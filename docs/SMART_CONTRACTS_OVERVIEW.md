@@ -1,10 +1,10 @@
 # STOEX smart contracts overview (auditor / integrator guide)
 
-**Version:** V1 simplified trade model  
+**Version:** V1 simplified trade model + 2026-08-10 audit remediation (`version = 4` on core proxies)  
 **Solidity:** `^0.8.24`  
-**Pattern:** UUPS upgradeable proxies, AccessControl, optional ERC-2771 gasless (`*For` + trusted forwarder)
+**Pattern:** UUPS upgradeable proxies, AccessControl, Tresori-relayer gasless (`*For` + trusted forwarder — **not** classic ERC-2771 suffix)
 
-This document describes the **on-chain design** for estimation and review. Deployment addresses are omitted — use `src/` and `abi/`.
+This document describes the **on-chain design**. Live Amoy addresses: `docs/FRONTEND_INTEGRATION.md`, `docs/AUDIT_REMEDIATION_REPORT.md`, or `.env`.
 
 ---
 
@@ -18,6 +18,7 @@ This document describes the **on-chain design** for estimation and review. Deplo
 | System role | `TRADE_MANAGER_ROLE` on `AssetLedger` (contract-to-contract) |
 | Gasless | `TradeManager`, `WhitelistRegistry`, `AssetLedger` via trusted forwarder |
 | Paid admin | `executeRequest`, registry admin, governance, timelock, escrow admin |
+| Forwarder rotation | Admin `setTrustedForwarder` on TM / WR / AL (emits `TrustedForwarderUpdated`) |
 
 **V1 removes:** on-chain mint/burn into a provider pool, multi-party approval (AP / VP / PAP / AT), and pool inventory gates on buy.
 
@@ -56,11 +57,14 @@ This document describes the **on-chain design** for estimation and review. Deplo
          └────────────────────┘
 ```
 
+Gasless auth model: `msg.sender` must be `trustedForwarder()`; the explicit `user`/`wallet` arg is the MPC `fromAddress` Tresori already authenticated. See audit report findings 01/02 (Accepted).
+
 ---
 
 ## 4. Identifiers & enums
 
 - **assetId / providerId:** `bytes32` = `keccak256(label)` e.g. `"GOLD"`, `"AP1"`
+- **userId:** `bytes32` off-chain identity; **unique** — one active wallet per `userId` (`UserIdAlreadyUsed`)
 - **RequestType (active):** `Buy`, `Sell`, `Redeem` (`Mint` / `Burn` enum values may remain for layout/history but have no entrypoints)
 - **RequestStatus (active path):** `Proposed` → `Executed` | `Rejected` | `Cancelled` | `Expired`  
   Intermediate approval statuses are unused in V1.
@@ -72,8 +76,8 @@ This document describes the **on-chain design** for estimation and review. Deplo
 
 | Role | Used for |
 |------|----------|
-| `DEFAULT_ADMIN_ROLE` | Execute sell/redeem, reject, pause, upgrades, all governance, timelock set/override, provider registry, wallet-change approval, unsuspend |
-| `USER_ROLE` | Create buy/sell/redeem / cancel (via relayer); granted on register |
+| `DEFAULT_ADMIN_ROLE` | Execute sell/redeem, reject, pause, upgrades, all governance, timelock set/override, provider registry, wallet-change approval, unsuspend, forwarder rotation |
+| `USER_ROLE` | Create buy/sell/redeem / cancel (via relayer); granted on register; **moved** on wallet migration |
 | `TRADE_MANAGER_ROLE` | Ledger mutators callable only by `TradeManager` |
 
 Legacy role constants (`AP_ROLE`, `VP_ROLE`, `AT_ROLE`, `PAP_ROLE`, `AUDITOR_ROLE`) may still exist in `StoexRoles.sol` but are **not required** for V1 trade flows.
@@ -87,6 +91,7 @@ Legacy role constants (`AP_ROLE`, `VP_ROLE`, `AT_ROLE`, `PAP_ROLE`, `AUDITOR_ROL
 - UUPS: `_authorizeUpgrade` gated by admin
 - Pause on `TradeManager` / `AssetLedger` where applicable
 - Reentrancy guards on state-changing trade/ledger paths
+- EscrowVault / TimelockController: `setTradeManager` is **updatable** by admin (not one-shot)
 
 ---
 
@@ -106,6 +111,9 @@ Legacy role constants (`AP_ROLE`, `VP_ROLE`, `AT_ROLE`, `PAP_ROLE`, `AUDITOR_ROL
 | `rejectRequest(requestId, reason)` | Admin; unlocks escrow |
 | `cancelRequestFor(initiator, requestId)` | User; unlocks escrow |
 | `expireRequest(requestId)` | After TTL; unlocks escrow |
+| `adminResetNonKycFiatPurchased(userId)` | Admin support reset of lifetime non-KYC fiat |
+
+Non-KYC fiat cap is **lifetime**, keyed by **`userId`** (not wallet). Verified users use daily buy metal caps.
 
 Settlement refs are stored in `TradeRequest.paymentRefId` (buy at create; sell/redeem at execute).
 
@@ -129,28 +137,31 @@ Soulbound ERC-721 certificate: one token per `(user, asset)` on first buy (or ad
 
 **Mutators (TradeManager only):** `creditUserBuy`, `decreaseSupply`, `mintCertificateForTrade`.
 
+**Nominee transfer:** admin `nomineeTransferForAsset` allows one exact `(from, to, tokenId)` path; other transfers revert `Soulbound`.
+
 No provider pool inventory; buys do not require on-chain stock.
 
 ### 7.3 `GovernanceConfig`
 
-Admin-only caps: daily buy/sell, min buy, min redeem, max per tx, request expiry, default timelock duration, non-KYC fiat cap, precision.  
+Admin-only caps: daily buy/sell, min buy, min redeem, max per tx, request expiry, default timelock duration, non-KYC fiat cap, precision (`1..18`).  
 No approval policy matrices in V1.
 
 ### 7.4 `EscrowVault`
 
-Logical lock keyed by `requestId`. Available balance = holding − locked. Only TradeManager locks/unlocks/releases.
+Logical lock keyed by `requestId`. Available balance = holding − locked. Only TradeManager locks/unlocks/releases. Admin may update `tradeManager`.
 
 ### 7.5 `TimelockController`
 
-Admin sets wallet/lot locks; sell/redeem create reverts while locked. Mint-lot auto-apply removed with mint.
+Admin sets wallet locks and lot locks via `setLotTimelock(user, assetId, lotId, until)`.  
+Sell/redeem create uses **O(1)** checks: wallet lock + `isUserAssetLotTimelocked(user, assetId)` (no unbounded lot-array scan).
 
 ### 7.6 `AssetProviderRegistry`
 
-Providers, supported assets, operators (ops metadata), `sellPayout` / `redeemSink` addresses used when releasing escrow (events / off-chain routing — not token transfers of gold).
+Providers, supported assets, operators (ops metadata), `sellPayout` / `redeemSink` addresses used when releasing escrow (events / off-chain routing — not token transfers of gold). Addresses may be EOAs.
 
 ### 7.7 `WhitelistRegistry`
 
-Register / KYC / suspend / blacklist. Wallet change: **admin-only** single approval. `unsuspendWallet`: admin.
+Register / KYC / suspend / blacklist. **`userId` unique.** Wallet change: **admin-only** single approval; migration syncs `USER_ROLE` on registry + TradeManager and updates `walletOfUserId`. `unsuspendWallet`: admin. `setTradeManager` requires a contract and emits an event.
 
 ---
 
@@ -159,12 +170,12 @@ Register / KYC / suspend / blacklist. Wallet change: **admin-only** single appro
 ### 8.1 Onboarding
 
 ```
-registerUserFor / adminRegisterUser
+registerUserFor / adminRegisterUser  (unique userId)
   → USER_ROLE on whitelist + TradeManager
 verifyKYCFor  → isEligible (sell/redeem)
 ```
 
-Pending KYC may buy under `nonKycMaxBuyFiatAmount`.
+Pending KYC may buy under lifetime `nonKycMaxBuyFiatAmount` (per `userId`).
 
 ### 8.2 Buy
 
@@ -205,6 +216,14 @@ Unlock escrow; terminal status. No third-party rejectors.
 Admin: `registerProvider`, `setProviderAsset`, `setAssetRouting`, `addProviderOperator`.  
 Operators are **not** required for trade approvals (there are none).
 
+### 8.7 Wallet migration
+
+```
+requestWalletChange → admin approveWalletChange
+  → profile + userId mapping → new wallet
+  → revoke USER_ROLE old; grant USER_ROLE new (WR + TradeManager)
+```
+
 ---
 
 ## 9. Settlement references
@@ -236,11 +255,14 @@ Escrow locks do not change holding until execute/reject/cancel/expire.
 1. Admin concentration on execute / reject / governance / timelock  
 2. Circulating vs holding consistency under escrow + concurrent requests  
 3. Provider binding and switch-after-full-exit  
-4. Non-KYC buy fiat accrual vs verified buy caps  
-5. Relayer / EIP-2771 actor spoofing on `*For`  
-6. Soulbound certificate + nominee transfer  
+4. Non-KYC buy fiat accrual by `userId` vs verified buy caps  
+5. Relayer trust model on `*For` (Tresori-gated; not ERC-2771 suffix)  
+6. Soulbound certificate + nominee exact-path transfer  
 7. UUPS / storage layout (legacy unused slots retained)  
-8. Settlement ref is commitment-only (no on-chain verify of plaintext)
+8. Settlement ref is commitment-only (no on-chain verify of plaintext)  
+9. Unique `userId` + wallet migration role sync  
+
+Remediation status for Femto 2026-08-07 findings: `docs/AUDIT_REMEDIATION_REPORT.md`.
 
 ---
 
@@ -249,6 +271,7 @@ Escrow locks do not change holding until execute/reject/cancel/expire.
 - **No on-chain inventory gate** — overselling vs physical vault is an off-chain / ops risk  
 - **Admin is sole settler** for sell/redeem — trust and key security critical  
 - **Refs are one-way hashes** — recovery of plaintext needs off-chain systems  
+- **Trusted forwarder is trusted infrastructure** (Tresori); optional future EIP-712 on `*For`  
 - **Legacy Mint/Burn/approval enums/slots** may remain for upgrade layout; no live entrypoints  
 
 ---
@@ -261,3 +284,4 @@ Escrow locks do not change holding until execute/reject/cancel/expire.
 | Lifetime issued | Cumulative buy volume per (asset, provider) |
 | Settlement ref | SHA-256 commitment of off-chain payment/payout/delivery id |
 | Escrow | Logical lock reducing available balance until settle/unlock |
+| userId | Unique off-chain identity bound to one wallet at a time |
