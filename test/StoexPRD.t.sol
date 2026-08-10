@@ -6,6 +6,8 @@ import {StoexTypes} from "../src/libraries/StoexTypes.sol";
 import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 import {AssetLedger} from "../src/AssetLedger.sol";
+import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
+import {GovernanceConfig} from "../src/GovernanceConfig.sol";
 import {StoexRelayerGate} from "../src/base/StoexRelayerGate.sol";
 
 /// @title StoexPRD
@@ -208,6 +210,59 @@ contract StoexPRDTest is StoexFixture {
         registry.approveWalletChange(chId);
         assertTrue(registry.isEligible(newW));
         assertFalse(registry.isEligible(user));
+        assertTrue(registry.hasRole(StoexRoles.USER_ROLE, newW));
+        assertFalse(registry.hasRole(StoexRoles.USER_ROLE, user));
+        assertTrue(trade.hasRole(StoexRoles.USER_ROLE, newW));
+        assertFalse(trade.hasRole(StoexRoles.USER_ROLE, user));
+        assertEq(registry.walletOfUserId(registry.getProfile(newW).userId), newW);
+    }
+
+    function test_duplicate_userId_reverts() public {
+        address u2 = makeAddr("dupId");
+        vm.prank(forwarder);
+        vm.expectRevert(WhitelistRegistry.UserIdAlreadyUsed.selector);
+        registry.registerUserFor(u2, keccak256("user"), "r");
+    }
+
+    function test_non_kyc_cap_is_per_userId_not_wallet() public {
+        // Same human cannot register a second wallet under a new userId for a fresh cap —
+        // uniqueness is enforced; cap is keyed by userId once registered.
+        address u = makeAddr("capUserId");
+        bytes32 uid = keccak256("cap-uid");
+        vm.prank(forwarder);
+        registry.registerUserFor(u, uid, "r");
+        gov.setNonKycMaxBuyFiatAmount(200_000);
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(u, GOLD, AP1, 100 * UG_PER_G, 100_000, bytes32(uint256(1)), bytes32(0));
+        assertEq(trade.nonKycFiatPurchasedByUserId(uid), 100_000);
+        vm.prank(forwarder);
+        vm.expectRevert(TradeManager.CapBuyNonKyc.selector);
+        trade.createBuyRequestFor(u, GOLD, AP1, 100 * UG_PER_G, 120_000, bytes32(uint256(2)), bytes32(0));
+        trade.adminResetNonKycFiatPurchased(uid);
+        assertEq(trade.nonKycFiatPurchasedByUserId(uid), 0);
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(u, GOLD, AP1, 100 * UG_PER_G, 120_000, bytes32(uint256(3)), bytes32(0));
+    }
+
+    function test_lot_timelock_blocks_sell_without_scanning_all_lots() public {
+        _executeBuy(user, GOLD, AP1, 200 * UG_PER_G);
+        uint256 lotId = 1;
+        timelock.setLotTimelock(user, GOLD, lotId, block.timestamp + 5 days);
+        vm.prank(forwarder);
+        vm.expectRevert(TradeManager.Timelocked.selector);
+        trade.createSellRequestFor(user, GOLD, AP1, 50 * UG_PER_G);
+        timelock.overrideLotTimelock(user, GOLD, lotId, 1);
+        uint256 rid = _sellRequest(user, GOLD, AP1, 50 * UG_PER_G);
+        assertTrue(rid > 0);
+    }
+
+    function test_asset_precision_bounds() public {
+        vm.expectRevert(GovernanceConfig.InvalidPrecision.selector);
+        gov.setAssetPrecision(GOLD, 0);
+        vm.expectRevert(GovernanceConfig.InvalidPrecision.selector);
+        gov.setAssetPrecision(GOLD, 19);
+        gov.setAssetPrecision(GOLD, 8);
+        assertEq(gov.assetPrecision(GOLD), 8);
     }
 
     function test_certificate_soulbound_transfer_reverts_for_user() public {

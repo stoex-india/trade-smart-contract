@@ -9,4 +9,7 @@ interface ITimelockController {
     function getLotTimelockExpiry(uint256 lotId) external view returns (uint256);
 
     function isWalletTimelockedUntil(address wallet) external view returns (uint256);
+
+    /// @notice True when any lot lock for `(user, assetId)` is still active (O(1), no lot array scan).
+    function isUserAssetLotTimelocked(address user, bytes32 assetId) external view returns (bool);
 }

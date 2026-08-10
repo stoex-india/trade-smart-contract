@@ -96,7 +96,7 @@ library TradeManagerLib {
         bytes32 payment_ref,
         bytes32 txDetailsHash_,
         DayCaps storage caps,
-        mapping(address => uint256) storage nonKycFiatPurchased,
+        mapping(bytes32 => uint256) storage nonKycFiatPurchasedByUserId,
         IWhitelistRegistry whitelistRegistry,
         IGovernanceConfig governance,
         IAssetLedger assetLedger
@@ -109,7 +109,8 @@ library TradeManagerLib {
         if (whitelistRegistry.isEligible(user)) {
             _accrueBuy(caps, assetId, weightUg);
         } else {
-            nonKycFiatPurchased[user] += fiat_value;
+            bytes32 userId = whitelistRegistry.getProfile(user).userId;
+            nonKycFiatPurchasedByUserId[userId] += fiat_value;
         }
 
         uint256 exp = block.timestamp + governance.requestExpiryDuration();
@@ -132,18 +133,12 @@ library TradeManagerLib {
         r.txDetailsHash = txDetailsHash_;
     }
 
-    function requireNotTimelocked(
-        address user,
-        bytes32 assetId,
-        ITimelockController timelockController,
-        IAssetLedger assetLedger
-    ) external view {
+    function requireNotTimelocked(address user, bytes32 assetId, ITimelockController timelockController)
+        external
+        view
+    {
         if (timelockController.isTimelocked(user)) revert Timelocked();
-        uint256[] memory lots = assetLedger.getUserLotIds(user, assetId);
-        for (uint256 i = 0; i < lots.length; i++) {
-            uint256 exp = timelockController.getLotTimelockExpiry(lots[i]);
-            if (exp != 0 && block.timestamp < exp) revert Timelocked();
-        }
+        if (timelockController.isUserAssetLotTimelocked(user, assetId)) revert Timelocked();
     }
 
     function emptyLot() public pure returns (StoexTypes.MintLotMeta memory m) {

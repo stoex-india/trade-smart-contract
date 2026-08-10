@@ -34,6 +34,7 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     );
     event TokensUnlocked(uint256 indexed requestId, address indexed user, uint256 amountUg);
     event EscrowReleased(uint256 indexed requestId, address indexed user, uint256 amountUg, address destination);
+    event TradeManagerUpdated(address indexed previous, address indexed current);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -46,13 +47,14 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
         assetLedger = IAssetLedger(assetLedger_);
-        version = 2;
+        version = 4;
     }
 
     function setTradeManager(address tradeManager_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (tradeManager_ == address(0)) revert ZeroAddress();
-        if (tradeManager != address(0)) revert AlreadySet();
+        address prev = tradeManager;
         tradeManager = tradeManager_;
+        emit TradeManagerUpdated(prev, tradeManager_);
     }
 
     modifier onlyTradeManager() {
@@ -145,7 +147,6 @@ contract EscrowVault is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgrad
     uint256[47] private __gap;
 
     error ZeroAddress();
-    error AlreadySet();
     error NotTradeManager();
     error LockExists();
     error ExceedsAvailable();

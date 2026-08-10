@@ -51,7 +51,10 @@ contract TradeManager is
     // Legacy co-sign / step-approval slots retained for UUPS layout.
     mapping(uint256 => mapping(uint256 => bool)) private _stepApproved;
     mapping(uint256 => uint256) private _coSignNonceLegacy;
-    mapping(address => uint256) private _nonKycFiatPurchased;
+    /// @dev Legacy per-wallet non-KYC accumulator (unused; retained for layout safety).
+    mapping(address => uint256) private _nonKycFiatPurchasedLegacy;
+    /// @dev Lifetime non-KYC fiat purchased keyed by registry `userId` (audit #05 / #08).
+    mapping(bytes32 => uint256) private _nonKycFiatPurchasedByUserId;
 
     event RequestCreated(
         uint256 indexed requestId,
@@ -67,6 +70,8 @@ contract TradeManager is
     event RequestCancelled(uint256 indexed requestId);
     event RequestExpired(uint256 indexed requestId);
     event SettlementRefSet(uint256 indexed requestId, bytes32 settlementRefId);
+    event TrustedForwarderUpdated(address indexed previous, address indexed current);
+    event NonKycFiatPurchasedReset(bytes32 indexed userId, uint256 previousAmount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -106,12 +111,14 @@ contract TradeManager is
         assetProviderRegistry = IAssetProviderRegistry(assetProviderRegistry_);
         _trustedForwarderValue = trustedForwarder_;
 
-        version = 3;
+        version = 4;
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (trustedForwarder_ == address(0)) revert ZeroAddress();
+        address prev = _trustedForwarderValue;
         _trustedForwarderValue = trustedForwarder_;
+        emit TrustedForwarderUpdated(prev, trustedForwarder_);
     }
 
     function trustedForwarder() public view override returns (address) {
@@ -122,6 +129,24 @@ contract TradeManager is
         if (msg.sender != address(whitelistRegistry)) revert NotWhitelistRegistry();
         if (user == address(0)) revert ZeroAddress();
         _grantRole(StoexRoles.USER_ROLE, user);
+    }
+
+    function revokeUserRoleFromRegistry(address user) external {
+        if (msg.sender != address(whitelistRegistry)) revert NotWhitelistRegistry();
+        if (user == address(0)) revert ZeroAddress();
+        _revokeRole(StoexRoles.USER_ROLE, user);
+    }
+
+    /// @notice Admin customer-service reset of lifetime non-KYC fiat accumulator for a `userId`.
+    function adminResetNonKycFiatPurchased(bytes32 userId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (userId == bytes32(0)) revert ZeroAddress();
+        uint256 prev = _nonKycFiatPurchasedByUserId[userId];
+        delete _nonKycFiatPurchasedByUserId[userId];
+        emit NonKycFiatPurchasedReset(userId, prev);
+    }
+
+    function nonKycFiatPurchasedByUserId(bytes32 userId) external view returns (uint256) {
+        return _nonKycFiatPurchasedByUserId[userId];
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -386,7 +411,7 @@ contract TradeManager is
             payment_ref,
             txDetailsHash_,
             _dayCaps,
-            _nonKycFiatPurchased,
+            _nonKycFiatPurchasedByUserId,
             whitelistRegistry,
             governance,
             assetLedger
@@ -405,7 +430,7 @@ contract TradeManager is
     }
 
     function _requireNotTimelocked(address user, bytes32 assetId) private view {
-        TradeManagerLib.requireNotTimelocked(user, assetId, timelockController, assetLedger);
+        TradeManagerLib.requireNotTimelocked(user, assetId, timelockController);
     }
 
     function _checkAmountUg(uint256 amountUg) private view {
@@ -427,7 +452,10 @@ contract TradeManager is
     }
 
     function _checkNonKycFiatCap(address user, uint256 fiatValue_) private view {
-        if (_nonKycFiatPurchased[user] + fiatValue_ > governance.nonKycMaxBuyFiatAmount()) revert CapBuyNonKyc();
+        bytes32 userId = whitelistRegistry.getProfile(user).userId;
+        if (_nonKycFiatPurchasedByUserId[userId] + fiatValue_ > governance.nonKycMaxBuyFiatAmount()) {
+            revert CapBuyNonKyc();
+        }
     }
 
     function _checkSellCap(bytes32 assetId, uint256 amountUg) private view {

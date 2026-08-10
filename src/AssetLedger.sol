@@ -52,6 +52,9 @@ contract AssetLedger is
     mapping(address => StoexTypes.TxRecord[]) private _txHistory;
 
     bool private _nomineeTransferActive;
+    address private _nomineeExpectedFrom;
+    address private _nomineeExpectedTo;
+    uint256 private _nomineeExpectedTokenId;
     address private _trustedForwarderValue;
     string private _baseTokenUri;
 
@@ -69,6 +72,7 @@ contract AssetLedger is
     event NomineeTransferred(address indexed fromBeneficiary, address indexed toCustody, uint256 tokenId);
     event WhitelistRegistryUpdated(address registry);
     event ActiveProviderCleared(address indexed user, bytes32 indexed assetId);
+    event TrustedForwarderUpdated(address indexed previous, address indexed current);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() ERC2771ContextUpgradeable(address(0)) {
@@ -90,12 +94,14 @@ contract AssetLedger is
 
         whitelistRegistry = IWhitelistRegistry(whitelistRegistry_);
         _trustedForwarderValue = trustedForwarder_;
-        version = 3;
+        version = 4;
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (trustedForwarder_ == address(0)) revert ZeroAddress();
+        address prev = _trustedForwarderValue;
         _trustedForwarderValue = trustedForwarder_;
+        emit TrustedForwarderUpdated(prev, trustedForwarder_);
     }
 
     function trustedForwarder() public view override returns (address) {
@@ -304,9 +310,15 @@ contract AssetLedger is
         if (beneficiaryOfToken[tokenId] != fromBeneficiary) revert InvalidBeneficiary();
 
         address currentOwner = ownerOf(tokenId);
+        _nomineeExpectedFrom = currentOwner;
+        _nomineeExpectedTo = toCustody;
+        _nomineeExpectedTokenId = tokenId;
         _nomineeTransferActive = true;
         _transfer(currentOwner, toCustody, tokenId);
         _nomineeTransferActive = false;
+        _nomineeExpectedFrom = address(0);
+        _nomineeExpectedTo = address(0);
+        _nomineeExpectedTokenId = 0;
 
         emit NomineeTransferred(fromBeneficiary, toCustody, tokenId);
     }
@@ -357,8 +369,10 @@ contract AssetLedger is
 
     function _update(address to, uint256 tokenId, address auth) internal override returns (address) {
         address from = _ownerOf(tokenId);
-        if (from != address(0) && to != address(0) && !_nomineeTransferActive) {
-            revert Soulbound();
+        if (from != address(0) && to != address(0)) {
+            bool allowedNominee = _nomineeTransferActive && from == _nomineeExpectedFrom && to == _nomineeExpectedTo
+                && tokenId == _nomineeExpectedTokenId;
+            if (!allowedNominee) revert Soulbound();
         }
         return super._update(to, tokenId, auth);
     }

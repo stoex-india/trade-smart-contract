@@ -723,6 +723,25 @@
   },
   {
     "type": "function",
+    "name": "walletOfUserId",
+    "inputs": [
+      {
+        "name": "userId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "whitelistWallet",
     "inputs": [
       {
@@ -903,6 +922,44 @@
       },
       {
         "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TradeManagerUpdated",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "current",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TrustedForwarderUpdated",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "current",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1136,6 +1193,11 @@
   },
   {
     "type": "error",
+    "name": "NotContract",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotDeployer",
     "inputs": []
   },
@@ -1182,7 +1244,17 @@
   },
   {
     "type": "error",
+    "name": "UserIdAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroUserId",
     "inputs": []
   }
 ]
