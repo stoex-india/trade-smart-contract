@@ -47,7 +47,7 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
 
-        version = 3;
+        version = 4;
 
         requestExpiryDuration = 7 days;
         uint256 ugPerKg = 1_000_000_000;
@@ -90,6 +90,7 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
     }
 
     function setAssetPrecision(bytes32 assetId, uint8 decimals_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (decimals_ == 0 || decimals_ > 18) revert InvalidPrecision();
         _assetPrecision[assetId] = decimals_;
         emit PolicyUpdated("assetPrecision", assetId);
     }
@@ -137,4 +138,5 @@ contract GovernanceConfig is Initializable, StoexDeployerAdminUpgradeable, UUPSU
 
     error ZeroAddress();
     error InvalidRequestType();
+    error InvalidPrecision();
 }

@@ -15,27 +15,25 @@ forge test -vv
 
 ## Current deployment (Polygon Amoy — chain `80002`)
 
+Redeployed **2026-08-10** after Femto Security audit remediation (contract `version = 4`). See [docs/AUDIT_REMEDIATION_REPORT.md](docs/AUDIT_REMEDIATION_REPORT.md).
+
 | Contract | Proxy address |
 |----------|---------------|
-| **GovernanceConfig** | `0x9d8712D90Af381829fb97eC16D44C063DF30f19e` |
-| **AssetRegistry** | `0x57a01603dDb311d8b394dcE78062394b578622Eb` |
-| **AssetProviderRegistry** | `0x3FC8b7DA2fa7801a81F6e59a8929e54636D51e93` |
-| **AssetProviderRegistry impl** (current) | `0xfD4D0871725535a3a7d6fe2EFc685A123556Ad18` |
-| **WhitelistRegistry** | `0xE5603C1e95F433E01A4737bf8d800f10D19648A8` |
-| **AssetLedger** | `0x411Ae02A0DA08D51EeD84fFBD58cE385E0fF9fb3` |
-| **EscrowVault** | `0xB33D00a16de5F9eB77753b0251E6af92b8c5AF5B` |
-| **TimelockController** | `0x109c4ce0db4a98e107D631f2ADF70166587985f4` |
-| **TradeManager** | `0x1bD7e862C403244650B9028C2eDBcC7a0480f547` |
-| **TradeManagerLib** (linked library) | `0xace904fd78507458f3d55d8b0efdd721747445a6` |
+| **GovernanceConfig** | `0x85636CBf6639366d3D72Aa7Bc9375F700685B05D` |
+| **AssetRegistry** | `0x53E5FEa57B8854DE17214714e13b565b8a637031` |
+| **AssetProviderRegistry** | `0x805Ae698602028A3f7fA3A9DF36FCB3595B6db7C` |
+| **WhitelistRegistry** | `0x1Dd88BD5Bf91c454894Be56D103EeDB75A7aF85C` |
+| **AssetLedger** | `0x464e01e2AbCA026DF92a612318D71cf20b43D4c2` |
+| **EscrowVault** | `0xCdD50B2D88d17DB7D4E161a08185931031aBe3C0` |
+| **TimelockController** | `0x2A6EDE57E6F6864F2d406E8a0BB04964d4bc010a` |
+| **TradeManager** | `0x5f1553F974F5Ae137Af52487EaCE01c8164cc9Cf` |
 | **Tresori relayer** (`RELAYER_SMART_CONTRACT`) | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
-**On-chain admin:** `0xb4451002742d6589781C5AfA6A213c8F6c1db087` (ops). Deployer `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` no longer holds `DEFAULT_ADMIN_ROLE`.
+**On-chain admin:** `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` (deployer / `PRIVATE_KEY`). Ops FE wallet `0xb445…` can receive `transferAdmin` later if needed.
 
-**Frontend integration:** see [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) (onboarding, admin roles, mint, buy, sell, reject).
+**Frontend integration:** see [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) (onboarding, buy, sell, redeem).
 
 **Architecture:** see [docs/SMART_CONTRACTS_OVERVIEW.md](docs/SMART_CONTRACTS_OVERVIEW.md).
-
-Redeployed **June 2026** — multi-asset stack (`AssetRegistry`, `AssetProviderRegistry`, `AssetLedger`) with relayer-gated `*For` gasless entrypoints.
 
 ### Asset provider IDs and display names
 

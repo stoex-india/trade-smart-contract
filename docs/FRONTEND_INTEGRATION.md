@@ -13,17 +13,17 @@ Polygon **Amoy** (`chainId: 80002`).
 
 | Contract | Address |
 |----------|---------|
-| TradeManager | `0xa60dCfb1a5C0E45E153374ba6E06869e8541964f` |
-| AssetLedger | `0x59de5932355955251F7247860e82FA3c1E2b7514` |
-| AssetRegistry | `0xA1A5333AFd216aD1e74aE0C9B9545b76Fe74A61a` |
-| AssetProviderRegistry | `0x0454095348404d459dfB3ff763e53D32772C8ab0` |
-| WhitelistRegistry | `0xdeea0a65F8fb439bDD2912449B5E18D827C0C091` |
-| GovernanceConfig | `0xd324a2e5EaC500Da70Df2305e8f315cbceaa1AE1` |
-| TimelockController | `0xd860c97Ba17f0da42aA55CF2645CAD0B90DB0c4F` |
-| EscrowVault | `0x3adBA83F12b9B4177cd0011e949c4c71961c4dE1` |
+| TradeManager | `0x5f1553F974F5Ae137Af52487EaCE01c8164cc9Cf` |
+| AssetLedger | `0x464e01e2AbCA026DF92a612318D71cf20b43D4c2` |
+| AssetRegistry | `0x53E5FEa57B8854DE17214714e13b565b8a637031` |
+| AssetProviderRegistry | `0x805Ae698602028A3f7fA3A9DF36FCB3595B6db7C` |
+| WhitelistRegistry | `0x1Dd88BD5Bf91c454894Be56D103EeDB75A7aF85C` |
+| GovernanceConfig | `0x85636CBf6639366d3D72Aa7Bc9375F700685B05D` |
+| TimelockController | `0x2A6EDE57E6F6864F2d406E8a0BB04964d4bc010a` |
+| EscrowVault | `0xCdD50B2D88d17DB7D4E161a08185931031aBe3C0` |
 | Tresori relayer | `0xB9CBD815098cc3d6A348bDfed995af91e2298d6D` |
 
-**Admin:** `0xb4451002742d6589781C5AfA6A213c8F6c1db087`
+**Admin:** `0xDb79cCBfFB614BCBf636a724D2E373cbAE36287d` (deployer; audit-remediation redeploy 2026-08-10)
 
 ---
 
@@ -65,6 +65,8 @@ function hashSettlementRef(secret: string, plaintext: string): `0x${string}` {
 
 ### Register (gasless)
 
+`userId` must be **unique** across the platform (same off-chain user identity → same `userId`). Reusing a `userId` on another wallet reverts with `UserIdAlreadyUsed`.
+
 ```ts
 await TreSori().writeGaslessMpcSmartContractTransaction({
   contractAddress: WHITELIST_REGISTRY,
@@ -89,7 +91,7 @@ await TreSori().writeGaslessMpcSmartContractTransaction({
 });
 ```
 
-Pending KYC users may **buy only** (within non-KYC fiat cap). Sell/redeem need `isEligible(user) === true`.
+Pending KYC users may **buy only** (lifetime non-KYC fiat cap is tracked by `userId`, not wallet). Sell/redeem need `isEligible(user) === true`.
 
 ---
 

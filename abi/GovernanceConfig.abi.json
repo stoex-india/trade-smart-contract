@@ -786,6 +786,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidPrecision",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidRequestType",
     "inputs": []
   },

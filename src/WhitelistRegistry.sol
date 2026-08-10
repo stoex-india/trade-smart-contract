@@ -3,12 +3,7 @@ pragma solidity ^0.8.24;
 
 /// @title STOEX Gold — WhitelistRegistry
 /// @notice On-chain **KYC / wallet / compliance** state. `isEligible` is the single gate used by `AssetLedger` and user-facing `TradeManager` flows.
-/// @dev UUPS upgradeable. Important roles (same `AccessControl` pattern as PRD):
-/// - `DEFAULT_ADMIN_ROLE`: admin-register users, KYC, wallet risk, suspend/blacklist; grant `USER_ROLE` for wallet-change requests.
-/// - Self-service: gasless `registerUserFor` and `verifyKYCFor` (relayer passes explicit wallet); admin may `adminRegisterUser` for back-office onboarding.
-/// - `USER_ROLE`: investor may `requestWalletChangeFor` for their own wallet via relayer.
-/// - Wallet migration: admin-only approval. `unsuspendWallet` is admin-only.
-/// Wallet migration copies `UserProfile` to the new address; old address is unregistered.
+/// @dev UUPS upgradeable. Gasless `*For` entrypoints are Tresori-relayer gated (explicit wallet; not ERC-2771 suffix).
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
@@ -32,6 +27,8 @@ contract WhitelistRegistry is
 
     mapping(address => StoexTypes.UserProfile) private _profiles;
     mapping(address => bool) private _registered;
+    /// @dev Enforces one active wallet per off-chain userId (audit #05).
+    mapping(bytes32 => address) private _walletByUserId;
 
     uint256 public nextWalletChangeId;
     struct WalletChangeRequest {
@@ -50,6 +47,8 @@ contract WhitelistRegistry is
     event WalletChangeRequested(uint256 indexed requestId, address oldWallet, address newWallet);
     event WalletChangeApproved(uint256 indexed requestId, address newWallet);
     event RiskLevelChanged(address indexed wallet, StoexTypes.RiskLevel oldLevel, StoexTypes.RiskLevel newLevel, bytes32 caseRef);
+    event TradeManagerUpdated(address indexed previous, address indexed current);
+    event TrustedForwarderUpdated(address indexed previous, address indexed current);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -62,23 +61,26 @@ contract WhitelistRegistry is
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
         _trustedForwarderValue = trustedForwarder_;
-        version = 1;
+        version = 4;
     }
 
-    /// @notice Updates trusted ERC-2771 forwarder for gasless registry operations.
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (trustedForwarder_ == address(0)) revert ZeroAddress();
+        address prev = _trustedForwarderValue;
         _trustedForwarderValue = trustedForwarder_;
+        emit TrustedForwarderUpdated(prev, trustedForwarder_);
     }
 
     function trustedForwarder() public view override returns (address) {
         return _trustedForwarderValue;
     }
 
-    /// @notice One-time link to `TradeManager` so self-registration can grant trade `USER_ROLE`.
     function setTradeManager(address tradeManager_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (tradeManager_ == address(0)) revert ZeroAddress();
+        if (tradeManager_.code.length == 0) revert NotContract();
+        address prev = address(tradeManager);
         tradeManager = ITradeManagerOnboarding(tradeManager_);
+        emit TradeManagerUpdated(prev, tradeManager_);
     }
 
     /// @notice Gasless self-registration via Tresori relayer. `wallet` is the investor MPC address (`fromAddress`).
@@ -96,10 +98,13 @@ contract WhitelistRegistry is
 
     function _registerUser(address wallet, bytes32 userId, string calldata kycRef) private {
         if (wallet == address(0)) revert ZeroAddress();
+        if (userId == bytes32(0)) revert ZeroUserId();
         if (_registered[wallet]) revert AlreadyRegistered();
+        if (_walletByUserId[userId] != address(0)) revert UserIdAlreadyUsed();
         if (address(tradeManager) == address(0)) revert TradeManagerNotSet();
 
         _registered[wallet] = true;
+        _walletByUserId[userId] = wallet;
         _profiles[wallet] = StoexTypes.UserProfile({
             userId: userId,
             wallet: wallet,
@@ -148,7 +153,6 @@ contract WhitelistRegistry is
         emit WalletStatusChanged(wallet, old_, p.walletStatus);
     }
 
-    /// @notice Gasless wallet-change request. `wallet` must equal `oldWallet` and hold `USER_ROLE`.
     function requestWalletChangeFor(address wallet, address oldWallet, address newWallet)
         external
         onlyTrustedForwarder
@@ -157,7 +161,6 @@ contract WhitelistRegistry is
         _requestWalletChange(wallet, oldWallet, newWallet);
     }
 
-    /// @notice Direct wallet-change request (EOA calls as wallet owner).
     function requestWalletChange(address oldWallet, address newWallet) external onlyRole(StoexRoles.USER_ROLE) {
         _requestWalletChange(msg.sender, oldWallet, newWallet);
     }
@@ -167,16 +170,15 @@ contract WhitelistRegistry is
         if (wallet != oldWallet) revert NotWalletOwner();
         if (!_registered[oldWallet]) revert NotRegistered();
         uint256 id = ++nextWalletChangeId;
-        walletChangeRequests[id] = WalletChangeRequest({oldWallet: oldWallet, newWallet: newWallet, adminOk: false, trusteeOk: false, processed: false});
+        walletChangeRequests[id] =
+            WalletChangeRequest({oldWallet: oldWallet, newWallet: newWallet, adminOk: false, trusteeOk: false, processed: false});
         emit WalletChangeRequested(id, oldWallet, newWallet);
     }
 
-    /// @notice Gasless admin approval of a wallet-change request.
     function approveWalletChangeFor(address actor, uint256 changeRequestId) external onlyTrustedForwarder {
         _approveWalletChange(actor, changeRequestId);
     }
 
-    /// @notice Admin approves wallet migration (single approval).
     function approveWalletChange(uint256 changeRequestId) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _approveWalletChange(msg.sender, changeRequestId);
     }
@@ -201,9 +203,24 @@ contract WhitelistRegistry is
         delete _profiles[oldWallet];
         _registered[oldWallet] = false;
 
+        if (hasRole(StoexRoles.USER_ROLE, oldWallet)) {
+            _revokeRole(StoexRoles.USER_ROLE, oldWallet);
+        }
+        tradeManager.revokeUserRoleFromRegistry(oldWallet);
+
         prof.wallet = newWallet;
         _profiles[newWallet] = prof;
         _registered[newWallet] = true;
+        _walletByUserId[prof.userId] = newWallet;
+
+        if (!hasRole(StoexRoles.USER_ROLE, newWallet)) {
+            _grantRole(StoexRoles.USER_ROLE, newWallet);
+        }
+        tradeManager.grantUserRoleFromRegistry(newWallet);
+    }
+
+    function walletOfUserId(bytes32 userId) external view returns (address) {
+        return _walletByUserId[userId];
     }
 
     function suspendWallet(address wallet, bytes32 caseRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -224,7 +241,10 @@ contract WhitelistRegistry is
         emit RiskLevelChanged(wallet, p.riskLevel, p.riskLevel, caseRef);
     }
 
-    function setWalletRisk(address wallet, StoexTypes.RiskLevel level, bytes32 caseRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setWalletRisk(address wallet, StoexTypes.RiskLevel level, bytes32 caseRef)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.RiskLevel old_ = p.riskLevel;
@@ -282,7 +302,10 @@ contract WhitelistRegistry is
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     error ZeroAddress();
+    error ZeroUserId();
+    error UserIdAlreadyUsed();
     error TradeManagerNotSet();
+    error NotContract();
     error AlreadyRegistered();
     error NotRegistered();
     error NotWalletOwner();
