@@ -15,9 +15,11 @@ evm_version = "cancun"
 
 [rpc_endpoints]
 amoy = "${AMOY_RPC_URL}"
+polygon = "${POLYGON_RPC_URL}"
 
 [etherscan]
 amoy = { key = "${POLYGONSCAN_API_KEY}", url = "https://api-amoy.polygonscan.com/api", chain = 80002 }
+polygon = { key = "${POLYGONSCAN_API_KEY}", url = "https://api.polygonscan.com/api", chain = 137 }
 
 [fmt]
 line_length = 120
