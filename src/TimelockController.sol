@@ -7,8 +7,11 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
+import {StoexOpsGuard} from "./base/StoexOpsGuard.sol";
+import {StoexRoles} from "./libraries/StoexRoles.sol";
+import {IGovernanceConfig} from "./interfaces/IGovernanceConfig.sol";
 
-contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgradeable {
+contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, StoexOpsGuard, UUPSUpgradeable {
     uint8 public version;
 
     address public tradeManager;
@@ -32,7 +35,22 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
         __AccessControl_init();
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
-        version = 4;
+        version = 5;
+    }
+
+    function initializeV5(address governance_) external reinitializer(2) onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        governance = IGovernanceConfig(governance_);
+        version = 5;
+    }
+
+    function _opsPermissions() internal view override returns (IGovernanceConfig) {
+        return governance;
+    }
+
+    function setGovernance(address governance_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        governance = IGovernanceConfig(governance_);
     }
 
     function setTradeManager(address tradeManager_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -42,7 +60,7 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
         emit TradeManagerUpdated(prev, tradeManager_);
     }
 
-    function setWalletTimelock(address wallet, uint256 untilTs) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setWalletTimelock(address wallet, uint256 untilTs) external onlyAdminOrOps(StoexRoles.OPS_SET_TIMELOCK) {
         walletLockUntil[wallet] = untilTs;
         emit TimelockSet(wallet, 0, untilTs, true);
     }
@@ -50,7 +68,7 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
     /// @notice Sets a per-lot lock and updates the O(1) max expiry for `(user, assetId)`.
     function setLotTimelock(address user, bytes32 assetId, uint256 lotId, uint256 untilTs)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_SET_TIMELOCK)
     {
         if (user == address(0)) revert ZeroAddress();
         lotLockUntil[lotId] = untilTs;
@@ -89,7 +107,10 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
         return u != 0 && block.timestamp < u;
     }
 
-    function overrideTimelock(address wallet, uint256 requestId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function overrideTimelock(address wallet, uint256 requestId)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_OVERRIDE_TIMELOCK)
+    {
         walletLockUntil[wallet] = 0;
         emit TimelockOverridden(wallet, 0, requestId, msg.sender);
     }
@@ -98,7 +119,7 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
     ///         admin may re-apply remaining lot locks if needed.
     function overrideLotTimelock(address user, bytes32 assetId, uint256 lotId, uint256 requestId)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_OVERRIDE_TIMELOCK)
     {
         lotLockUntil[lotId] = 0;
         userAssetLotLockMax[user][assetId] = 0;
@@ -107,7 +128,8 @@ contract TimelockController is Initializable, StoexDeployerAdminUpgradeable, UUP
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    uint256[48] private __gap;
+    IGovernanceConfig public governance;
+    uint256[47] private __gap;
 
     error ZeroAdmin();
     error ZeroAddress();

@@ -79,7 +79,9 @@ contract StoexPRDTest is StoexFixture {
         _executeBuy(user, GOLD, AP1, 100 * UG_PER_G);
         vm.prank(forwarder);
         vm.expectRevert(TradeManager.CapBuy.selector);
-        trade.createBuyRequestFor(user, GOLD, AP1, 100 * UG_PER_G, 100 * UG_PER_G * 100, bytes32(uint256(2)), bytes32(0));
+        trade.createBuyRequestFor(
+            user, GOLD, AP1, 100 * UG_PER_G, 100 * UG_PER_G * 100, bytes32(uint256(2)), bytes32(0)
+        );
     }
 
     function test_timelock_blocks_sell_until_expiry() public {
@@ -219,9 +221,10 @@ contract StoexPRDTest is StoexFixture {
 
     function test_duplicate_userId_reverts() public {
         address u2 = makeAddr("dupId");
+        bytes32 uid = registry.getProfile(user).userId;
         vm.prank(forwarder);
         vm.expectRevert(WhitelistRegistry.UserIdAlreadyUsed.selector);
-        registry.registerUserFor(u2, keccak256("user"), "r");
+        registry.registerUserFor(u2, uid, "r");
     }
 
     function test_non_kyc_cap_is_per_userId_not_wallet() public {

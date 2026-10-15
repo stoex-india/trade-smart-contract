@@ -133,10 +133,42 @@ library TradeManagerLib {
         r.txDetailsHash = txDetailsHash_;
     }
 
-    function requireNotTimelocked(address user, bytes32 assetId, ITimelockController timelockController)
-        external
-        view
-    {
+    function finalizeTransfer(
+        StoexTypes.TradeRequest storage r,
+        uint256 requestId,
+        address from,
+        address to,
+        address operator,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 refHash,
+        IGovernanceConfig governance,
+        IAssetLedger assetLedger
+    ) external {
+        assetLedger.transferHoldings(from, to, assetId, providerId, amountUg, requestId);
+
+        uint256 exp = block.timestamp + governance.requestExpiryDuration();
+        r.assetId = assetId;
+        r.providerId = providerId;
+        r.requestType = StoexTypes.RequestType.Transfer;
+        r.status = StoexTypes.RequestStatus.Executed;
+        r.initiator = operator;
+        r.targetUser = to;
+        r.amountUg = amountUg;
+        r.paymentRefId = refHash;
+        r.vaultReceiptId = bytes32(0);
+        r.reason = "";
+        r.createdAt = block.timestamp;
+        r.expiresAt = exp;
+        r.approvalsDone = 0;
+        r.mintLot = emptyLot();
+        r.escrowLocked = false;
+        r.fiatValue = 0;
+        r.txDetailsHash = bytes32(0);
+    }
+
+    function requireNotTimelocked(address user, bytes32 assetId, ITimelockController timelockController) external view {
         if (timelockController.isTimelocked(user)) revert Timelocked();
         if (timelockController.isUserAssetLotTimelocked(user, assetId)) revert Timelocked();
     }

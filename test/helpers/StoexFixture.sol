@@ -74,7 +74,8 @@ abstract contract StoexFixture is Test {
         address assetRegAddr;
         {
             AssetRegistry impl = new AssetRegistry();
-            assetRegAddr = address(new ERC1967Proxy(address(impl), abi.encodeCall(AssetRegistry.initialize, (deployer))));
+            assetRegAddr =
+                address(new ERC1967Proxy(address(impl), abi.encodeCall(AssetRegistry.initialize, (deployer))));
         }
         assetReg = AssetRegistry(assetRegAddr);
 
@@ -110,9 +111,8 @@ abstract contract StoexFixture is Test {
         address timelockAddr;
         {
             TimelockController impl = new TimelockController();
-            timelockAddr = address(
-                new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (deployer)))
-            );
+            timelockAddr =
+                address(new ERC1967Proxy(address(impl), abi.encodeCall(TimelockController.initialize, (deployer))));
         }
         timelock = TimelockController(timelockAddr);
 
@@ -159,6 +159,12 @@ abstract contract StoexFixture is Test {
         timelock.setTradeManager(tradeAddr);
         ledger.grantRole(StoexRoles.TRADE_MANAGER_ROLE, tradeAddr);
         registry.setTradeManager(tradeAddr);
+
+        registry.setGovernance(govAddr);
+        ledger.setGovernance(govAddr);
+        assetReg.setGovernance(govAddr);
+        providerReg.setGovernance(govAddr);
+        timelock.setGovernance(govAddr);
 
         _registerVerifiedUser(user);
     }

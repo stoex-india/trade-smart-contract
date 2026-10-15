@@ -13,10 +13,13 @@ import {StoexTypes} from "./libraries/StoexTypes.sol";
 import {StoexRoles} from "./libraries/StoexRoles.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
 import {ITradeManagerOnboarding} from "./interfaces/ITradeManagerOnboarding.sol";
+import {IGovernanceConfig} from "./interfaces/IGovernanceConfig.sol";
+import {StoexOpsGuard} from "./base/StoexOpsGuard.sol";
 
 contract WhitelistRegistry is
     Initializable,
     StoexDeployerAdminUpgradeable,
+    StoexOpsGuard,
     UUPSUpgradeable,
     StoexRelayerGate,
     IWhitelistRegistry
@@ -31,6 +34,7 @@ contract WhitelistRegistry is
     mapping(bytes32 => address) private _walletByUserId;
 
     uint256 public nextWalletChangeId;
+
     struct WalletChangeRequest {
         address oldWallet;
         address newWallet;
@@ -39,14 +43,20 @@ contract WhitelistRegistry is
         bool processed;
     }
     mapping(uint256 => WalletChangeRequest) public walletChangeRequests;
+    IGovernanceConfig public governance;
 
     event UserRegistered(address indexed wallet, bytes32 userId);
+    event GovernanceUpdated(address indexed previous, address indexed current);
     event KYCStatusChanged(address indexed wallet, StoexTypes.KYCStatus oldStatus, StoexTypes.KYCStatus newStatus);
-    event WalletStatusChanged(address indexed wallet, StoexTypes.WalletStatus oldStatus, StoexTypes.WalletStatus newStatus);
+    event WalletStatusChanged(
+        address indexed wallet, StoexTypes.WalletStatus oldStatus, StoexTypes.WalletStatus newStatus
+    );
     event UserStatusChanged(address indexed wallet, StoexTypes.UserStatus oldStatus, StoexTypes.UserStatus newStatus);
     event WalletChangeRequested(uint256 indexed requestId, address oldWallet, address newWallet);
     event WalletChangeApproved(uint256 indexed requestId, address newWallet);
-    event RiskLevelChanged(address indexed wallet, StoexTypes.RiskLevel oldLevel, StoexTypes.RiskLevel newLevel, bytes32 caseRef);
+    event RiskLevelChanged(
+        address indexed wallet, StoexTypes.RiskLevel oldLevel, StoexTypes.RiskLevel newLevel, bytes32 caseRef
+    );
     event TradeManagerUpdated(address indexed previous, address indexed current);
     event TrustedForwarderUpdated(address indexed previous, address indexed current);
 
@@ -61,7 +71,24 @@ contract WhitelistRegistry is
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
         _trustedForwarderValue = trustedForwarder_;
-        version = 4;
+        version = 5;
+    }
+
+    function initializeV5(address governance_) external reinitializer(2) onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        governance = IGovernanceConfig(governance_);
+        version = 5;
+    }
+
+    function _opsPermissions() internal view override returns (IGovernanceConfig) {
+        return governance;
+    }
+
+    function setGovernance(address governance_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        address prev = address(governance);
+        governance = IGovernanceConfig(governance_);
+        emit GovernanceUpdated(prev, governance_);
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -91,7 +118,7 @@ contract WhitelistRegistry is
     /// @notice Admin back-office registration for any wallet (admin panel).
     function adminRegisterUser(bytes32 userId, address wallet, string calldata kycRef)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_REGISTER_USER)
     {
         _registerUser(wallet, userId, kycRef);
     }
@@ -145,7 +172,7 @@ contract WhitelistRegistry is
         emit KYCStatusChanged(wallet, old_, p.kycStatus);
     }
 
-    function whitelistWallet(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function whitelistWallet(address wallet) external onlyAdminOrOps(StoexRoles.OPS_WHITELIST_WALLET) {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.WalletStatus old_ = p.walletStatus;
@@ -170,8 +197,9 @@ contract WhitelistRegistry is
         if (wallet != oldWallet) revert NotWalletOwner();
         if (!_registered[oldWallet]) revert NotRegistered();
         uint256 id = ++nextWalletChangeId;
-        walletChangeRequests[id] =
-            WalletChangeRequest({oldWallet: oldWallet, newWallet: newWallet, adminOk: false, trusteeOk: false, processed: false});
+        walletChangeRequests[id] = WalletChangeRequest({
+            oldWallet: oldWallet, newWallet: newWallet, adminOk: false, trusteeOk: false, processed: false
+        });
         emit WalletChangeRequested(id, oldWallet, newWallet);
     }
 
@@ -179,12 +207,15 @@ contract WhitelistRegistry is
         _approveWalletChange(actor, changeRequestId);
     }
 
-    function approveWalletChange(uint256 changeRequestId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function approveWalletChange(uint256 changeRequestId)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_APPROVE_WALLET_CHANGE)
+    {
         _approveWalletChange(msg.sender, changeRequestId);
     }
 
     function _approveWalletChange(address actor, uint256 changeRequestId) private {
-        if (!hasRole(DEFAULT_ADMIN_ROLE, actor)) revert NotAdmin();
+        if (!_hasAdminOrOps(actor, StoexRoles.OPS_APPROVE_WALLET_CHANGE)) revert NotAdmin();
         WalletChangeRequest storage w = walletChangeRequests[changeRequestId];
         if (w.oldWallet == address(0)) revert InvalidRequest();
         if (w.processed) revert AlreadyProcessed();
@@ -223,7 +254,7 @@ contract WhitelistRegistry is
         return _walletByUserId[userId];
     }
 
-    function suspendWallet(address wallet, bytes32 caseRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function suspendWallet(address wallet, bytes32 caseRef) external onlyAdminOrOps(StoexRoles.OPS_SUSPEND_WALLET) {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.WalletStatus old_ = p.walletStatus;
@@ -243,7 +274,7 @@ contract WhitelistRegistry is
 
     function setWalletRisk(address wallet, StoexTypes.RiskLevel level, bytes32 caseRef)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_SET_WALLET_RISK)
     {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
@@ -252,7 +283,7 @@ contract WhitelistRegistry is
         emit RiskLevelChanged(wallet, old_, level, caseRef);
     }
 
-    function setUserBlocked(address wallet, bool blocked) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setUserBlocked(address wallet, bool blocked) external onlyAdminOrOps(StoexRoles.OPS_SET_USER_BLOCKED) {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.UserStatus old_ = p.userStatus;
@@ -260,7 +291,7 @@ contract WhitelistRegistry is
         emit UserStatusChanged(wallet, old_, p.userStatus);
     }
 
-    function unsuspendWallet(address wallet, bytes32 caseRef) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unsuspendWallet(address wallet, bytes32 caseRef) external onlyAdminOrOps(StoexRoles.OPS_UNSUSPEND_WALLET) {
         StoexTypes.UserProfile storage p = _profiles[wallet];
         if (!_registered[wallet]) revert NotRegistered();
         StoexTypes.WalletStatus old_ = p.walletStatus;

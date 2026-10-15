@@ -43,11 +43,17 @@ interface IAssetLedger {
         uint256 requestId
     ) external;
 
-    function creditUserBuy(
+    function creditUserBuy(bytes32 assetId, bytes32 providerId, address user, uint256 amountUg, uint256 requestId)
+        external
+        returns (uint256 lotId);
+
+    /// @notice Move µg from `from` to `to` without changing circulating / lifetime counters.
+    function transferHoldings(
+        address from,
+        address to,
         bytes32 assetId,
         bytes32 providerId,
-        address user,
         uint256 amountUg,
         uint256 requestId
-    ) external returns (uint256 lotId);
+    ) external;
 }
