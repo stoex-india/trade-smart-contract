@@ -6,6 +6,7 @@ pragma solidity ^0.8.24;
 /// @dev Buy auto-executes. Sell/Redeem escrow then admin `executeRequest(requestId, settlementRef)`.
 ///      No mint/burn. No multi-party approvals — only Admin and User roles on the trade path.
 import {StoexRelayerGate} from "./base/StoexRelayerGate.sol";
+import {StoexOpsGuard} from "./base/StoexOpsGuard.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -26,6 +27,7 @@ import {ITimelockController} from "./interfaces/ITimelockController.sol";
 contract TradeManager is
     Initializable,
     StoexDeployerAdminUpgradeable,
+    StoexOpsGuard,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     UUPSUpgradeable,
@@ -72,6 +74,43 @@ contract TradeManager is
     event SettlementRefSet(uint256 indexed requestId, bytes32 settlementRefId);
     event TrustedForwarderUpdated(address indexed previous, address indexed current);
     event NonKycFiatPurchasedReset(bytes32 indexed userId, uint256 previousAmount);
+    event AssetTransferred(
+        address indexed from,
+        address indexed to,
+        bytes32 indexed assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 refHash,
+        address operator,
+        uint256 requestId
+    );
+    event AdminTradeReconciled(
+        uint256 indexed requestId, address indexed user, address indexed operator, StoexTypes.RequestType requestType
+    );
+
+    struct BuyReconcile {
+        address user;
+        bytes32 assetId;
+        bytes32 providerId;
+        uint256 weightUg;
+        uint256 fiatValue;
+        bytes32 paymentRef;
+        bytes32 txDetailsHash;
+    }
+
+    struct SellReconcile {
+        address user;
+        bytes32 assetId;
+        bytes32 providerId;
+        uint256 amountUg;
+    }
+
+    struct RedeemReconcile {
+        address user;
+        bytes32 assetId;
+        bytes32 providerId;
+        uint256 amountUg;
+    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -111,7 +150,15 @@ contract TradeManager is
         assetProviderRegistry = IAssetProviderRegistry(assetProviderRegistry_);
         _trustedForwarderValue = trustedForwarder_;
 
-        version = 4;
+        version = 5;
+    }
+
+    function initializeV5() external reinitializer(2) onlyRole(DEFAULT_ADMIN_ROLE) {
+        version = 5;
+    }
+
+    function _opsPermissions() internal view override returns (IGovernanceConfig) {
+        return governance;
     }
 
     function setTrustedForwarder(address trustedForwarder_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -138,7 +185,7 @@ contract TradeManager is
     }
 
     /// @notice Admin customer-service reset of lifetime non-KYC fiat accumulator for a `userId`.
-    function adminResetNonKycFiatPurchased(bytes32 userId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function adminResetNonKycFiatPurchased(bytes32 userId) external onlyAdminOrOps(StoexRoles.OPS_RESET_NON_KYC_FIAT) {
         if (userId == bytes32(0)) revert ZeroAddress();
         uint256 prev = _nonKycFiatPurchasedByUserId[userId];
         delete _nonKycFiatPurchasedByUserId[userId];
@@ -169,6 +216,37 @@ contract TradeManager is
     ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
         _requireUserRole(user);
         return _createBuyRequest(user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
+    }
+
+    /// @notice Paid admin replay of a buy that never landed on-chain. Same checks as `createBuyRequestFor`.
+    function adminCreateBuyRequest(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 weightUg,
+        uint256 fiat_value,
+        bytes32 payment_ref,
+        bytes32 txDetailsHash
+    ) external onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE) whenNotPaused nonReentrant returns (uint256 requestId) {
+        return _reconcileBuy(user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
+    }
+
+    function adminCreateBuyRequestBatch(BuyReconcile[] calldata items)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256[] memory requestIds)
+    {
+        uint256 n = items.length;
+        if (n == 0) revert EmptyBatch();
+        requestIds = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            BuyReconcile calldata it = items[i];
+            requestIds[i] = _reconcileBuy(
+                it.user, it.assetId, it.providerId, it.weightUg, it.fiatValue, it.paymentRef, it.txDetailsHash
+            );
+        }
     }
 
     function _createBuyRequest(
@@ -207,6 +285,33 @@ contract TradeManager is
     {
         _requireUserRole(user);
         return _createSellRequest(user, assetId, providerId, amountUg);
+    }
+
+    /// @notice Paid admin replay of a sell create. Stays Proposed; execute later.
+    function adminCreateSellRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
+        return _reconcileSell(user, assetId, providerId, amountUg);
+    }
+
+    function adminCreateSellRequestBatch(SellReconcile[] calldata items)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256[] memory requestIds)
+    {
+        uint256 n = items.length;
+        if (n == 0) revert EmptyBatch();
+        requestIds = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            SellReconcile calldata it = items[i];
+            requestIds[i] = _reconcileSell(it.user, it.assetId, it.providerId, it.amountUg);
+        }
     }
 
     function _createSellRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
@@ -254,6 +359,33 @@ contract TradeManager is
         return _createRedeemRequest(user, assetId, providerId, amountUg);
     }
 
+    /// @notice Paid admin replay of a redeem create. Stays Proposed; execute later.
+    function adminCreateRedeemRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256 requestId)
+    {
+        return _reconcileRedeem(user, assetId, providerId, amountUg);
+    }
+
+    function adminCreateRedeemRequestBatch(RedeemReconcile[] calldata items)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_RECONCILE_TRADE)
+        whenNotPaused
+        nonReentrant
+        returns (uint256[] memory requestIds)
+    {
+        uint256 n = items.length;
+        if (n == 0) revert EmptyBatch();
+        requestIds = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            RedeemReconcile calldata it = items[i];
+            requestIds[i] = _reconcileRedeem(it.user, it.assetId, it.providerId, it.amountUg);
+        }
+    }
+
     function _createRedeemRequest(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
         private
         returns (uint256 requestId)
@@ -287,10 +419,113 @@ contract TradeManager is
         emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Redeem, user, amountUg, 0);
     }
 
+    /// @notice Gasless user-to-user µg transfer. Mints dest certificate if they have none.
+    function transferAssetFor(
+        address from,
+        address to,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 refHash
+    ) external onlyTrustedForwarder whenNotPaused nonReentrant returns (uint256 requestId) {
+        _requireUserRole(from);
+        return _transferAsset(from, to, assetId, providerId, amountUg, refHash, from);
+    }
+
+    /// @notice Paid admin/ops transfer from a registered source wallet to a registered dest wallet.
+    function transferAsset(
+        address from,
+        address to,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 refHash
+    ) external onlyAdminOrOps(StoexRoles.OPS_TRANSFER_ASSET) whenNotPaused nonReentrant returns (uint256 requestId) {
+        return _transferAsset(from, to, assetId, providerId, amountUg, refHash, msg.sender);
+    }
+
+    function _transferAsset(
+        address from,
+        address to,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 amountUg,
+        bytes32 refHash,
+        address operator
+    ) private returns (uint256 requestId) {
+        if (from == to) revert SelfTransfer();
+        if (amountUg == 0) revert ZeroAmount();
+        _validateAssetProvider(assetId, providerId);
+        _requireTransferParty(from, governance.transferSourceKycRequired());
+        _requireTransferParty(to, governance.transferDestKycRequired());
+        _requireNotTimelocked(from, assetId);
+        if (escrowVault.getAvailableBalance(from, assetId, providerId) < amountUg) revert InsufficientAvailable();
+
+        requestId = ++nextRequestId;
+        TradeManagerLib.finalizeTransfer(
+            _requests[requestId],
+            requestId,
+            from,
+            to,
+            operator,
+            assetId,
+            providerId,
+            amountUg,
+            refHash,
+            governance,
+            assetLedger
+        );
+
+        emit AssetTransferred(from, to, assetId, providerId, amountUg, refHash, operator, requestId);
+        emit RequestCreated(requestId, assetId, providerId, StoexTypes.RequestType.Transfer, operator, amountUg, 0);
+        emit RequestExecuted(requestId, StoexTypes.RequestType.Transfer);
+    }
+
+    function _reconcileBuy(
+        address user,
+        bytes32 assetId,
+        bytes32 providerId,
+        uint256 weightUg,
+        uint256 fiat_value,
+        bytes32 payment_ref,
+        bytes32 txDetailsHash
+    ) private returns (uint256 requestId) {
+        _requireUserRole(user);
+        requestId = _createBuyRequest(user, assetId, providerId, weightUg, fiat_value, payment_ref, txDetailsHash);
+        emit AdminTradeReconciled(requestId, user, msg.sender, StoexTypes.RequestType.Buy);
+    }
+
+    function _reconcileSell(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        private
+        returns (uint256 requestId)
+    {
+        _requireUserRole(user);
+        requestId = _createSellRequest(user, assetId, providerId, amountUg);
+        emit AdminTradeReconciled(requestId, user, msg.sender, StoexTypes.RequestType.Sell);
+    }
+
+    function _reconcileRedeem(address user, bytes32 assetId, bytes32 providerId, uint256 amountUg)
+        private
+        returns (uint256 requestId)
+    {
+        _requireUserRole(user);
+        requestId = _createRedeemRequest(user, assetId, providerId, amountUg);
+        emit AdminTradeReconciled(requestId, user, msg.sender, StoexTypes.RequestType.Redeem);
+    }
+
+    function _requireTransferParty(address user, bool requireKyc) private view {
+        if (!whitelistRegistry.hasUserRole(user)) revert NotUser();
+        if (requireKyc) {
+            if (!whitelistRegistry.isEligible(user)) revert NotEligible();
+        } else if (!whitelistRegistry.isEligible(user) && !whitelistRegistry.isEligibleForNonKycUser(user)) {
+            revert NotEligible();
+        }
+    }
+
     /// @notice Admin rejects a pending sell/redeem (unlocks escrow).
     function rejectRequest(uint256 requestId, string calldata reason_)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_REJECT_REQUEST)
         whenNotPaused
         nonReentrant
     {
@@ -344,7 +579,7 @@ contract TradeManager is
     /// @notice Admin executes sell/redeem. `settlementRefId` is a client-side SHA-256 hash (payout / delivery).
     function executeRequest(uint256 requestId, bytes32 settlementRefId)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_EXECUTE_REQUEST)
         whenNotPaused
         nonReentrant
     {
@@ -499,4 +734,7 @@ contract TradeManager is
     error ProviderBindingConflict();
     error UnsupportedRequestType();
     error ZeroSettlementRef();
+    error SelfTransfer();
+    error InsufficientAvailable();
+    error EmptyBatch();
 }

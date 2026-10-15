@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 /// @title IGovernanceConfig
-/// @notice Read-only policy API consumed by `TradeManager`.
+/// @notice Read-only policy API consumed by `TradeManager` and ops-gated contracts.
 interface IGovernanceConfig {
     function requestExpiryDuration() external view returns (uint256);
 
@@ -21,4 +21,10 @@ interface IGovernanceConfig {
     function nonKycMaxBuyFiatAmount() external view returns (uint256);
 
     function minimumBuyValueInUg(bytes32 assetId) external view returns (uint256);
+
+    function hasOpsCapability(address account, bytes32 cap) external view returns (bool);
+
+    function transferSourceKycRequired() external view returns (bool);
+
+    function transferDestKycRequired() external view returns (bool);
 }

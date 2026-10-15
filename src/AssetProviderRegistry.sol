@@ -7,10 +7,19 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import {StoexDeployerAdminUpgradeable} from "./base/StoexDeployerAdminUpgradeable.sol";
+import {StoexOpsGuard} from "./base/StoexOpsGuard.sol";
+import {StoexRoles} from "./libraries/StoexRoles.sol";
 import {IAssetProviderRegistry} from "./interfaces/IAssetProviderRegistry.sol";
 import {IAssetRegistry} from "./interfaces/IAssetRegistry.sol";
+import {IGovernanceConfig} from "./interfaces/IGovernanceConfig.sol";
 
-contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, UUPSUpgradeable, IAssetProviderRegistry {
+contract AssetProviderRegistry is
+    Initializable,
+    StoexDeployerAdminUpgradeable,
+    StoexOpsGuard,
+    UUPSUpgradeable,
+    IAssetProviderRegistry
+{
     uint8 public version;
 
     IAssetRegistry public assetRegistry;
@@ -52,7 +61,22 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
         __UUPSUpgradeable_init();
         __StoexDeployerAdmin_init_unchained(deployer_);
         assetRegistry = IAssetRegistry(assetRegistry_);
-        version = 1;
+        version = 5;
+    }
+
+    function initializeV5(address governance_) external reinitializer(2) onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        governance = IGovernanceConfig(governance_);
+        version = 5;
+    }
+
+    function _opsPermissions() internal view override returns (IGovernanceConfig) {
+        return governance;
+    }
+
+    function setGovernance(address governance_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (governance_ == address(0)) revert ZeroAddress();
+        governance = IGovernanceConfig(governance_);
     }
 
     function setAssetRegistry(address registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -61,7 +85,10 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
         emit AssetRegistryUpdated(registry);
     }
 
-    function registerProvider(bytes32 providerId, string calldata name) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function registerProvider(bytes32 providerId, string calldata name)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
         if (providerId == bytes32(0)) revert ZeroProviderId();
         if (bytes(name).length == 0) revert EmptyName();
         if (_providers[providerId].registered) revert ProviderExists();
@@ -69,20 +96,31 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
         emit ProviderRegistered(providerId, name);
     }
 
-    function setProviderActive(bytes32 providerId, bool active) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (!_providers[providerId].registered) revert UnknownProvider();
+    function setProviderActive(bytes32 providerId, bool active)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
+        if (!_providers[providerId].registered) {
+            revert UnknownProvider();
+        }
         _providers[providerId].active = active;
         emit ProviderActiveChanged(providerId, active);
     }
 
-    function updateProviderName(bytes32 providerId, string calldata name) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateProviderName(bytes32 providerId, string calldata name)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
         if (!_providers[providerId].registered) revert UnknownProvider();
         if (bytes(name).length == 0) revert EmptyName();
         _providers[providerId].name = name;
         emit ProviderNameUpdated(providerId, name);
     }
 
-    function setProviderAsset(bytes32 providerId, bytes32 assetId, bool supported) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setProviderAsset(bytes32 providerId, bytes32 assetId, bool supported)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
         if (!_providers[providerId].registered) revert UnknownProvider();
         if (!assetRegistry.isActive(assetId)) revert AssetNotActive();
         _supported[providerId][assetId] = supported;
@@ -91,7 +129,7 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
 
     function setAssetRouting(bytes32 providerId, bytes32 assetId, address sellPayout, address redeemSink)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
     {
         if (!_providers[providerId].registered) revert UnknownProvider();
         if (!_supported[providerId][assetId]) revert AssetNotSupported();
@@ -100,7 +138,10 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
         emit AssetRoutingSet(providerId, assetId, sellPayout, redeemSink);
     }
 
-    function addProviderOperator(bytes32 providerId, address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function addProviderOperator(bytes32 providerId, address wallet)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
         if (!_providers[providerId].registered) revert UnknownProvider();
         if (wallet == address(0)) revert ZeroAddress();
         if (_operatorToProvider[wallet] != bytes32(0)) revert OperatorAlreadyAssigned();
@@ -109,7 +150,10 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
         emit OperatorAdded(providerId, wallet);
     }
 
-    function removeProviderOperator(bytes32 providerId, address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function removeProviderOperator(bytes32 providerId, address wallet)
+        external
+        onlyAdminOrOps(StoexRoles.OPS_MANAGE_PROVIDERS)
+    {
         if (_operatorToProvider[wallet] != providerId) revert NotOperator();
         delete _operatorToProvider[wallet];
         address[] storage ops = _operators[providerId];
@@ -163,7 +207,8 @@ contract AssetProviderRegistry is Initializable, StoexDeployerAdminUpgradeable, 
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    uint256[44] private __gap;
+    IGovernanceConfig public governance;
+    uint256[43] private __gap;
 
     error ZeroAddress();
     error ZeroProviderId();

@@ -35,7 +35,8 @@ library StoexTypes {
         Sell,
         Redeem,
         Mint,
-        Burn
+        Burn,
+        Transfer
     }
 
     /// @dev PRD statuses; PAPApproved covers Physical Asset Provider step on redeem.
@@ -62,7 +63,8 @@ library StoexTypes {
         Redeem,
         Mint,
         Burn,
-        Adjustment
+        Adjustment,
+        Transfer
     }
 
     struct MintLotMeta {
