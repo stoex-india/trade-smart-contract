@@ -7,6 +7,7 @@ import {StoexRoles} from "../src/libraries/StoexRoles.sol";
 import {StoexOpsGuard} from "../src/base/StoexOpsGuard.sol";
 import {TradeManager} from "../src/TradeManager.sol";
 import {AssetLedger} from "../src/AssetLedger.sol";
+import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
 import {TradeManagerLib} from "../src/libraries/TradeManagerLib.sol";
 
 contract OpsTransferTest is StoexFixture {
@@ -39,6 +40,43 @@ contract OpsTransferTest is StoexFixture {
         gov.setMinimumBuyValueInUg(GOLD, 2_000);
         gov.setMinimumBuyValueInUg(GOLD, 3_000);
         assertEq(gov.minimumBuyValueInUg(GOLD), 3_000);
+    }
+
+    function test_admin_verify_kyc_makes_user_eligible() public {
+        assertFalse(registry.isEligible(pendingDest));
+        registry.adminVerifyKYC(pendingDest);
+        assertTrue(registry.isEligible(pendingDest));
+        assertFalse(registry.isEligibleForNonKycUser(pendingDest));
+    }
+
+    function test_ops_verify_kyc_when_capability_on() public {
+        vm.prank(ops);
+        registry.adminVerifyKYC(pendingDest);
+        assertTrue(registry.isEligible(pendingDest));
+    }
+
+    function test_ops_verify_kyc_rejected_when_capability_off() public {
+        gov.setOpsCapability(StoexRoles.OPS_VERIFY_KYC, false);
+        vm.prank(ops);
+        vm.expectRevert(StoexOpsGuard.NotAuthorized.selector);
+        registry.adminVerifyKYC(pendingDest);
+        registry.adminVerifyKYC(pendingDest);
+        assertTrue(registry.isEligible(pendingDest));
+    }
+
+    function test_user_and_forwarder_cannot_admin_verify_kyc() public {
+        vm.prank(pendingDest);
+        vm.expectRevert(StoexOpsGuard.NotAuthorized.selector);
+        registry.adminVerifyKYC(pendingDest);
+        vm.prank(forwarder);
+        vm.expectRevert(StoexOpsGuard.NotAuthorized.selector);
+        registry.adminVerifyKYC(pendingDest);
+    }
+
+    function test_admin_verify_kyc_twice_reverts() public {
+        registry.adminVerifyKYC(pendingDest);
+        vm.expectRevert(WhitelistRegistry.KycNotPending.selector);
+        registry.adminVerifyKYC(pendingDest);
     }
 
     function test_ops_cannot_pause() public {

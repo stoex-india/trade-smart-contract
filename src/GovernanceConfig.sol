@@ -99,6 +99,7 @@ contract GovernanceConfig is
 
     function _seedOpsCapabilities() private {
         _opsCapabilityEnabled[StoexRoles.OPS_REGISTER_USER] = true;
+        _opsCapabilityEnabled[StoexRoles.OPS_VERIFY_KYC] = true;
         _opsCapabilityEnabled[StoexRoles.OPS_WHITELIST_WALLET] = true;
         _opsCapabilityEnabled[StoexRoles.OPS_SUSPEND_WALLET] = true;
         _opsCapabilityEnabled[StoexRoles.OPS_UNSUSPEND_WALLET] = true;

@@ -121,6 +121,15 @@ contract AdminReconcileTest is StoexFixture {
         );
     }
 
+    function test_admin_verify_kyc_then_sell_works() public {
+        gov.setNonKycMaxBuyFiatAmount(5_000_000);
+        vm.prank(forwarder);
+        trade.createBuyRequestFor(pendingUser, GOLD, AP1, 20 * UG_PER_G, 1_000_000, bytes32(uint256(1)), bytes32(0));
+        registry.adminVerifyKYC(pendingUser);
+        uint256 rid = trade.adminCreateSellRequest(pendingUser, GOLD, AP1, 5 * UG_PER_G);
+        assertEq(uint256(trade.getRequestStatus(rid)), uint256(StoexTypes.RequestStatus.Proposed));
+    }
+
     function test_pending_kyc_sell_still_reverts() public {
         gov.setNonKycMaxBuyFiatAmount(5_000_000);
         vm.prank(forwarder);

@@ -155,6 +155,11 @@ contract WhitelistRegistry is
         _verifyKYC(user);
     }
 
+    /// @notice Paid admin/ops KYC verify for back-office onboarding. Same checks as `verifyKYCFor`.
+    function adminVerifyKYC(address user) external onlyAdminOrOps(StoexRoles.OPS_VERIFY_KYC) {
+        _verifyKYC(user);
+    }
+
     function _verifyKYC(address user) private {
         if (!_registered[user]) revert NotRegistered();
         StoexTypes.UserProfile storage p = _profiles[user];

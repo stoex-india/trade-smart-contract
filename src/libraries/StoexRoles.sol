@@ -18,6 +18,7 @@ library StoexRoles {
     bytes32 internal constant OPS_ADMIN_ROLE = keccak256("OPS_ADMIN_ROLE");
 
     bytes32 internal constant OPS_REGISTER_USER = keccak256("OPS_REGISTER_USER");
+    bytes32 internal constant OPS_VERIFY_KYC = keccak256("OPS_VERIFY_KYC");
     bytes32 internal constant OPS_WHITELIST_WALLET = keccak256("OPS_WHITELIST_WALLET");
     bytes32 internal constant OPS_SUSPEND_WALLET = keccak256("OPS_SUSPEND_WALLET");
     bytes32 internal constant OPS_UNSUSPEND_WALLET = keccak256("OPS_UNSUSPEND_WALLET");
